@@ -8,6 +8,7 @@ from .analysis import capture_provenance, specimen_provenance
 from .art import ACCENT, INK, SHADOW, base_rgba, curve_points, stored_preview
 from .geometry import active_region, polygon_mask, region_domain, signed_area, specimen_frame, validate_polygon
 from .model import InputError, collection, dictionary, enumeration, identity, numeric_pair, string
+from .relief import cover_edge_length, cover_points
 
 
 MIN_SEGMENT = 2.0
@@ -250,13 +251,24 @@ def polygon_geometry(tile, frame, selection, available):
 def create_metrology(store, specimen_id, payload):
     data = dictionary(payload, "Image measurement")
     title = string(data.get("title"), "Measurement title", maximum=90)
-    mode = enumeration(data.get("mode"), ("trace", "area"), "Geometry measurement")
+    mode = enumeration(data.get("mode"), ("trace", "area", "cover"), "Geometry measurement")
     tile = store.tile(specimen_id)
     frame = specimen_frame(store.blobs, tile)
     available = region_domain(frame.extent, tile) & frame.valid
     if mode == "trace":
         points = path_points(data.get("points"))
         shape, overlay = trace_geometry(frame, available, points)
+        region = None
+    elif mode == "cover":
+        points = cover_points(data)
+        relief_id = identity(data.get("relief_result_id"), "Pile relief measurement ID")
+        relief_record = store.result(relief_id)
+        if relief_record.get("kind") != "relief":
+            raise InputError("Select a saved Pile relief height measurement to drive the cover edge.")
+        if relief_record.get("tile_id") != specimen_id:
+            raise InputError("The relief measurement belongs to a different specimen.")
+        shape, overlay = cover_edge_length(store, tile, data, relief_record)
+        shape["points"] = points
         region = None
     else:
         region = active_region(tile, identity(data.get("region_id"), "Region ID"))

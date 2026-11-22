@@ -138,10 +138,31 @@ function optionInput(key,item) {
   return "";
 }
 
+function reliefAnchorControls() {
+  const anchors=state.reliefAnchors||[
+    {label:"Edge pile",pile_height_mm:null,vertices:[]},
+    {label:"Tall pile",pile_height_mm:null,vertices:[]},
+  ];
+  state.reliefAnchors=anchors;
+  return anchors.map((anchor,index)=>`<fieldset class="relief-anchor" data-anchor="${index}">
+      <legend>${e(anchor.label||`Anchor ${index+1}`)}</legend>
+      <div class="form-columns">
+        ${textField("Anchor label",`anchor-${index}-label`,anchor.label,'maxlength="40"')}
+        ${numField("Hand-measured pile height mm",`anchor-${index}-height`,anchor.pile_height_mm,0.05,200,0.1)}
+      </div>
+      <p class="soft">Circle the cast-shadow stretch recognizable in <strong>both</strong> raking photos. Deep base dye is excluded automatically.</p>
+      <div class="actions">${btn(`Draw anchor ${index+1} shadow outline`,"relief-anchor-draw","tiny secondary","measure",`data-anchor="${index}"`)}
+        <span class="soft" id="anchor-${index}-count">${anchor.vertices.length} outline points</span></div>
+    </fieldset>`).join("");
+}
+
 function measureControls() {
   const tool=state.config.tools[state.tool];
   const all=state.tile.photos.filter(item=>item.registered_url);
   const match=field=>sources(tool.capture_pair?all.filter(item=>item.role===tool.capture_pair[field]):all,null,tool.capture_pair?"Auto if unique":"Base capture");
+  const reliefBlock=state.tool==="relief"
+    ? `<div class="relief-block"><h4>Pile calibration anchors (two hand-measured piles)</h4>${reliefAnchorControls()}</div>`
+    : "";
   return `<form id="measurement-form" class="form-stack">
     ${selectField("Measurement","kind",Object.entries(state.config.tools).map(([name,item])=>option(name,item.label,state.tool)).join(""))}
     <p class="soft">${e(tool.description)}</p>
@@ -149,6 +170,7 @@ function measureControls() {
     ${tool.capture_pair?selectField("Paired photo","comparison_id",match(1)):checkField("Apply saved neutral balance","apply_neutral",true)}
     ${selectField("Region","region_id",regions())}
     <div class="form-columns">${Object.entries(tool.fields).map(([key,item])=>optionInput(key,item)).join("")}</div>
+    ${reliefBlock}
     ${["profile","marking","joint","blade"].includes(state.tool)?btn("Mark line on image","mark-profile","secondary","measure"):""}
     <button class="button primary" type="submit">${icon("measure")}Run measurement</button>
   </form>`;
@@ -170,23 +192,36 @@ function geometryPage() {
   const record=state.metrologyActive;
   const results=state.metrology||[];
   const tile=state.tile;
-  let report=empty("Save a traced path or the area of an existing sampling region.");
+  let report=empty("Save a traced path, a sloped cover edge, or the area of an existing sampling region.");
   if (record) {
     const metrics=record.shape;
     const base=`/api/metrology/${record.id}`;
     const stats=record.mode==="trace"
       ? [["Trace length",`${n(metrics.trace_length)} ${metrics.length_unit}`],["Supported stations",percent(metrics.overall_support)]]
-      : [["Marked area",`${n(metrics.vector_outline_area)} ${metrics.units}`],["Visible area",`${n(metrics.raster_supported_area)} ${metrics.units}`],["Outline",`${n(metrics.outline_length)} ${metrics.outline_unit}`]];
-    const stations=record.mode==="trace"?metrics.segments:metrics.outline_segments;
+      : record.mode==="cover"
+        ? [["Sloped length (measured only)",`${n(metrics.sloped_length_mm_measured_only)} mm`],
+           ["Projected length (reference)",`${n(metrics.projected_length_mm)} mm`],
+           ["Unestimated gap projection",`${n(metrics.unestimated_gap_projected_mm)} mm`],
+           ["Gaps",metrics.gap_count]]
+        : [["Marked area",`${n(metrics.vector_outline_area)} ${metrics.units}`],["Visible area",`${n(metrics.raster_supported_area)} ${metrics.units}`],["Outline",`${n(metrics.outline_length)} ${metrics.outline_unit}`]];
+    const stations=record.mode==="trace"?metrics.segments:record.mode==="cover"?metrics.segments:metrics.outline_segments;
+    const coverNote=record.mode==="cover"
+      ? `<p class="notice">${e(metrics.note)}</p>${metrics.gaps.length?table(["Gap from station","To station","Projected mm"],metrics.gaps.map(g=>[g.from_station,g.to_station,n(g.projected_length_mm,3)])):"<p class='soft'>No unestimated gaps along this edge.</p>"}`
+      : "";
+    const segmentTable=record.mode==="cover"
+      ? table(["Segment","Projected mm","Sloped mm (measured only)","Fully estimated"],
+          stations.map(item=>[item.index,n(item.projected_length_mm,3),n(item.sloped_length_mm_measured_only,3),item.fully_estimated?"yes":"no"]))
+      : table(["Segment","Length","Heading"],stations.map(item=>[item.index,`${n(item.length)} ${item.units}`,n(item.clockwise_heading)+"°"]));
     report=`<section class="card stack"><h3>${e(record.title)}</h3>
       <figure class="stage">${img(base+"/overlay.png",record.title)}</figure>
       <div class="metrics">${stats.map(([name,value])=>stat(name,value)).join("")}</div>
-      ${table(["Segment","Length","Heading"],stations.map(item=>[item.index,`${n(item.length)} ${item.units}`,n(item.clockwise_heading)+"°"]))}
+      ${coverNote}
+      ${segmentTable}
       <div class="actions">${link("Measurement JSON",base+"/data.json","secondary","download")}</div></section>`;
   }
   return `<div class="grid-detail">${report}<div class="stack"><section class="card"><h3>Measure a visible shape</h3>
       <p class="soft">Trace along the image or measure visible support inside a saved sampling region.</p>
-      <div class="actions">${btn("Trace a path","trace-add","primary","measure")}${btn("Measure region area","area-add","secondary","frame")}</div></section>
+      <div class="actions">${btn("Trace a path","trace-add","primary","measure")}${btn("Measure region area","area-add","secondary","frame")}${btn("Sloped cover edge","cover-add","secondary","measure")}</div></section>
       <section class="card"><h3>Saved geometry</h3><div class="divider-list">${results.map(item=>`<div class="row"><div class="grow">${e(item.title)}<br><small>${e(item.mode)} · revision ${item.specimen.version}</small></div>${btn("Open","metrology-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No saved outlines.</p>"}</div></section></div></div>`;
 }
 
@@ -492,6 +527,23 @@ function refForm() {
     });
 }
 
+function reliefAnchorForm(index) {
+  const photo=currentPhoto();
+  if (!photo?.registered_url) throw Error("Register the raking-light photographs before drawing an anchor.");
+  const anchor=state.reliefAnchors[index];
+  modal(`Anchor ${index+1} shadow outline`,`<p class="notice">Click around the cast-shadow stretch that is recognizable in <strong>both</strong> raking-light photos. Use the same physical cluster in each view; the dark base dye is excluded automatically and is not a shadow.</p>
+    ${drawing(photo.registered_url,"Registered plane for anchor outline")}
+    <div class="actions">${btn("Clear points","draw-clear","tiny secondary")}${btn("Undo point","draw-undo","tiny ghost")}<span class="soft" id="draw-count"></span></div>`,
+    "Use outline",async ()=>{
+      if (drawPoints.length<3) throw Error("Mark at least three points to close the outline.");
+      state.reliefAnchors[index].vertices=drawPoints;
+      const counter=q(`#anchor-${index}-count`);
+      if (counter) counter.textContent=`${drawPoints.length} outline points`;
+      commitModal();
+    },true);
+  prepareDrawing(anchor.vertices||[],24);
+}
+
 function pairForm() {
   const ready=state.tile.photos.filter(item=>item.registered_url);
   if (ready.length<2) throw Error("Register at least two captures first.");
@@ -511,6 +563,31 @@ function pairForm() {
       parent.innerHTML=`<figure class="stage">${img(uri,"Registered pair comparison")}</figure>
         <div class="metrics">${stat("Shared pixels",n(support.support_overlap_px,0))}${stat("Edges compared",n(support.edge_positions_compared,0))}</div>`;
     },true);
+}
+
+function coverEdgeForm() {
+  const base=state.tile.photos.find(item=>item.registration_state==="base");
+  if (!base) throw Error("Set a base photo before drawing a cover edge.");
+  const reliefs=state.results.filter(item=>item.kind==="relief");
+  if (!reliefs.length) throw Error("Run and save a Pile relief height measurement before drawing a cover edge.");
+  const optionsHtml=reliefs.map(item=>option(item.id,`${item.label} · ${date(item.created_at)}`)).join("");
+  modal("Trace sloped cover edge",`
+    ${textField("Measurement title","title","Sloped cover edge",'required maxlength="90"')}
+    <p class="notice">Draw the cover border across the embroidery yarns. Length follows the real incline where pile heights were confirmed in both raking photos; unestimated stretches are listed as gaps and are not flattened into the total.</p>
+    ${selectField("Pile relief ruler","relief_result_id",optionsHtml)}
+    ${drawing(base.registered_url,"Specimen plane for cover edge")}
+    <div class="actions">${btn("Clear points","draw-clear","tiny secondary")}${btn("Undo point","draw-undo","tiny ghost")}<span class="soft" id="draw-count"></span></div>`,
+    "Save cover edge",async data=>{
+      if (drawPoints.length<2) throw Error("Mark at least two cover edge points.");
+      const payload={title:data.get("title")||"Sloped cover edge",mode:"cover",
+        relief_result_id:data.get("relief_result_id"),points:drawPoints};
+      state.metrologyActive=await api(tileUrl()+"/metrology",{method:"POST",body:payload});
+      await gatherTile();
+      commitModal();
+      toast("Cover edge saved.");
+      render();
+    },true);
+  prepareDrawing([],45);
 }
 
 function geometryMeasurementForm(mode) {
@@ -633,13 +710,30 @@ function parsedOptions(data,tool) {
   }));
 }
 
+function reliefPayload(data) {
+  const anchors=[];
+  for (let i=0;i<2;i++) {
+    const anchor=state.reliefAnchors?.[i];
+    const label=data.get(`anchor-${i}-label`) || anchor?.label || `Anchor ${i+1}`;
+    const height=data.get(`anchor-${i}-height`);
+    const vertices=anchor?.vertices||[];
+    if (!vertices.length) throw Error(`Draw the shadow outline for ${label}.`);
+    const value=Number(height);
+    if (!(value>0)) throw Error(`Enter the hand-measured pile height for ${label}.`);
+    anchors.push({label,pile_height_mm:value,vertices});
+  }
+  return anchors;
+}
+
 async function runMeasurement(data) {
   const revision=travel;
-  const result=await api(tileUrl()+"/results",{method:"POST",body:{
+  const body={
     kind:state.tool,photo_id:data.get("photo_id")||null,comparison_id:data.get("comparison_id")||null,
     region_id:data.get("region_id")||null,apply_neutral:data.has("apply_neutral"),
     options:parsedOptions(data,state.config.tools[state.tool]),
-  }});
+  };
+  if (state.tool==="relief") body.anchors=reliefPayload(data);
+  const result=await api(tileUrl()+"/results",{method:"POST",body});
   if (revision!==travel) return;
   state.result=result;
   state.layer="overlay";
@@ -711,8 +805,10 @@ async function doAction(name,target) {
       });
     },
     "mark-profile":lineForm,
+    "relief-anchor-draw":()=>reliefAnchorForm(Number(target.dataset.anchor)),
     "trace-add":()=>geometryMeasurementForm("trace"),
     "area-add":()=>geometryMeasurementForm("area"),
+    "cover-add":()=>coverEdgeForm(),
     "metrology-open":()=>{state.metrologyActive=state.metrology.find(item=>item.id===id);render();},
     "receive-add":importEvidence,
     "received-open":()=>{state.receivedActive=state.received.find(item=>item.id===id);render();},
@@ -812,6 +908,12 @@ document.addEventListener("input",event=>{
 document.addEventListener("change",event=>{
   if (event.target.id==="field-kind") {
     state.tool=event.target.value;
+    if (state.tool==="relief"&&!state.reliefAnchors) {
+      state.reliefAnchors=[
+        {label:"Edge pile",pile_height_mm:null,vertices:[]},
+        {label:"Tall pile",pile_height_mm:null,vertices:[]},
+      ];
+    }
     const existing=q("#measurement-form");
     existing.outerHTML=measureControls();
     q("#field-kind")?.focus();

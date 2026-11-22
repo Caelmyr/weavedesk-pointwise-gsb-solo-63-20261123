@@ -25,6 +25,13 @@ export function metricSet(record) {
     joint: () => [["Measured stations",m.measured_stations],["Unmeasured stations",m.unmeasured_stations],["Median absolute contrast",n(m.median_absolute_step,4)]],
     blade: () => [["Marked axis",`${n(m.axis_length)} ${m.length_unit}`],["Largest visible width",m.maximum_width==null?"—":`${n(m.maximum_width)} ${m.length_unit}`],["Supported sections",`${m.observed_stations}/${m.requested_stations}`]],
     aggregate: () => [["Bright clusters",m.candidate_clusters],["Supported pixels",m.observed_pixels],["Bright fraction",percent(m.bright_fraction_of_support)]],
+    relief: () => {
+      const cc=m.cross_check;
+      return [["Matched pile clusters",m.matched_feature_count],["Workshop scale",n(m.scale_factor_mm_per_mm_shadow,4)],
+        ["Tallest estimated (mm)",m.tallest_feature?n(m.tallest_feature.estimated_height_mm,2):"—"],
+        ["Second ruler error",cc?`${n(cc.error_percent,1)}%`:"—"],
+        ["Dark ground excluded px",n(m.dark_ground_excluded_pixels,0)]];
+    },
   }[record.kind]();
   return `<div class="metrics">${rows.map(([name,value])=>stat(name,value)).join("")}</div>`;
 }
@@ -128,6 +135,24 @@ function referenceDetail(m) {
     <p class="notice">${e(m.capture_note)}</p>`;
 }
 
+function reliefDetail(m) {
+  const cc=m.cross_check;
+  const anchorRows=m.anchor_scales.map(a=>[a.label,`${n(a.pile_height_mm,2)} mm`,`${n(a.used_shadow_mm,2)} mm`,n(a.scale_factor,4),a.left_verified&&a.right_verified?"both views":"check outline"]);
+  const warnings=(m.warnings||[]).map(w=>`<p class="notice warn">${e(w)}</p>`).join("");
+  return `<h3>Single workshop height ruler</h3>
+    <p class="plot-note">${e(m.note)}</p>
+    ${warnings}
+    ${table(["Calibration anchor","Hand measured","Shadow used","Scale factor","Shadow verified"],anchorRows)}
+    <div class="metrics">
+      <div><strong>Chosen ruler:</strong> ${e(m.scale_anchor)} (${e(m.scale_choice_reason)}) · factor ${n(m.scale_factor_mm_per_mm_shadow,5)}</div>
+      <div><strong>Cross-check at ${e(cc.anchor)}:</strong> measured ${n(cc.measured_height_mm,2)} mm, ruler predicts ${n(cc.predicted_height_mm,2)} mm (${n(cc.error_percent,2)}%)${cc.within_15_percent?" · within 15%":cc.within_30_percent?" · within 30%":" · poor match"}</div>
+    </div>
+    <h3>Clusters confirmed in both raking photos</h3>
+    ${table(["Rank","Feature","Height mm","Shadow used mm","Left shadow mm","Right shadow mm","Pair offset px","Pixels"],
+      m.features.map(r=>[r.height_rank,r.feature,n(r.estimated_height_mm,3),n(r.used_shadow_mm,2),n(r.left_shadow_mm,2),n(r.right_shadow_mm,2),n(r.pair_distance_px,2),r.pixels]))}
+    <p class="soft">Matched in both views: ${m.matched_feature_count} · left-only shadows: ${m.left_only_components} · right-only shadows: ${m.right_only_components} · unmeasured support px: ${n(m.unmeasured_support_pixels,0)} · dark base dye excluded px: ${n(m.dark_ground_excluded_pixels,0)}</p>`;
+}
+
 function details(record) {
   const render = {
     weave:m=>`<h3>Visible yarn families</h3><p class="plot-note">${e(m.note)}</p>${table(["Family","Direction (°)",`Pitch (${m.unit})`,"Peak / background"],m.rows.map(item=>[item.family,n(item.angle_degrees,2),n(item.pitch,3),n(item.peak_to_background,2)]))}`,
@@ -136,7 +161,7 @@ function details(record) {
     ]))}`,
     color:colorDetail,coverage:coverageDetail,defects:defectsDetail,glare:glareDetail,
     direction:directionDetail,texture:textureDetail,profile:profileDetail,reference:referenceDetail,craze:crazeDetail,rim:rimDetail,
-    marking:markingDetail,joint:jointDetail,aggregate:aggregateDetail,blade:bladeDetail,
+    marking:markingDetail,joint:jointDetail,aggregate:aggregateDetail,blade:bladeDetail,relief:reliefDetail,
   }[record.kind];
   return render(record.kind==="defects" ? record : record.metrics);
 }

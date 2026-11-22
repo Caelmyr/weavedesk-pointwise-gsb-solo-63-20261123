@@ -133,6 +133,19 @@ TOOLS = {
             "reference_id": {"kind": "reference", "label": "Approved visual reference", "default": None},
         },
     },
+    "relief": {
+        "label": "Pile relief height",
+        "description": "Calibrate one shadow-to-height ruler from two hand-measured piles, then estimate heights only for clusters whose cast shadows are confirmed in both raking-light photos.",
+        "capture_pair": ["rake-left", "rake-right"],
+        "fields": {
+            "shading_radius": {"kind": "number", "label": "Local shading radius px", "default": 7, "min": 1.5, "max": 40, "step": 0.5},
+            "sensitivity": {"kind": "number", "label": "Shadow sensitivity", "default": 0.62, "min": 0.05, "max": 0.98, "step": 0.01},
+            "match_tolerance_px": {"kind": "number", "label": "Two-view match tolerance px", "default": 26, "min": 2, "max": 220, "step": 1},
+            "cross_axis_px": {"kind": "number", "label": "Cross-axis alignment px", "default": 6, "min": 0.5, "max": 60, "step": 0.5},
+            "min_shadow_pixels": {"kind": "integer", "label": "Minimum shadow footprint px", "default": 30, "min": 8, "max": 2000, "step": 1},
+            "calibration_anchor": {"kind": "integer", "label": "Force scale anchor (1 or 2, blank = edge)", "default": 0, "min": 0, "max": 2, "step": 1},
+        },
+    },
 }
 
 
@@ -159,6 +172,10 @@ def parsed_option(key, field, raw):
     label = field["label"]
     kind = field["kind"]
     if kind == "integer":
+        if key == "calibration_anchor":
+            if raw in (None, "", 0):
+                return None
+            return integer(raw, label, lower=1, upper=2)
         return integer(raw, label, lower=field["min"], upper=field["max"])
     if kind == "number":
         return scalar(raw, label, lower=field["min"], upper=field["max"])

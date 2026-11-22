@@ -55,6 +55,7 @@ ANALYSIS_LABELS = {
     "joint": "Mount seam scan",
     "blade": "Binding width",
     "aggregate": "Pale fiber flecks",
+    "relief": "Pile relief height",
 }
 
 

@@ -30,6 +30,7 @@ from .model import ANALYSIS_LABELS, InputError, library_fields
 from .parameters import TOOLS, analysis_parameters
 from .profile import measure_profile
 from .dots import measure_dots
+from .relief import measure_relief
 from .store import key_for
 from .texture import measure_texture
 from .weave import measure_weave
@@ -231,7 +232,7 @@ def compute_single(store, tile, frame, region, area, linear, correction, params,
     raise RuntimeError(f"Unsupported image measurement: {kind}.")
 
 
-def compute_pair(tile, first, second, area, params):
+def compute_pair(tile, first, second, area, params, store=None, payload=None):
     kind = params["kind"]
     options = params["options"]
     if kind == "glare":
@@ -241,26 +242,38 @@ def compute_pair(tile, first, second, area, params):
         scale = max(options["glare_fraction"] * 2, 0.45)
         image = magnitude_overlay(first, map_values, valid, scale, unknown=unknown)
         return metrics, image, theoretical_legend(kind, scale)
+    if kind == "relief":
+        if store is None or payload is None:
+            raise InputError("Pile relief needs the specimen store and anchor measurements.")
+        metrics, image = measure_relief(store, tile, payload)
+        return metrics, image, None
     metrics, values, valid, unknown = measure_direction(first, second, area, options)
     scale = max(metrics["local_threshold"] * 2.4, 0.06)
     image = signed_overlay(first, values, valid, scale, unknown=unknown)
     return metrics, image, theoretical_legend(kind, scale)
 
 
-def result_key(tile, params, reference):
-    return key_for({
+def result_key(tile, params, reference, extra=None):
+    basis = {
         "analyzer_version": ANALYZER_VERSION,
         "params": params,
         "tile_id": tile["id"],
         "tile_version": tile["version"],
         "reference_version": reference["version"] if reference else None,
-    })
+    }
+    if extra is not None:
+        basis["method_inputs"] = extra
+    return key_for(basis)
 
 
 def evaluate(store, tile_id, payload):
     tile = store.tile(tile_id)
     params, reference = resolve_parameters(store, tile, payload)
-    cache_key = result_key(tile, params, reference)
+    extra = None
+    if params["kind"] == "relief":
+        # Anchor outlines and hand measurements must invalidate the cache.
+        extra = {"anchors": payload.get("anchors")}
+    cache_key = result_key(tile, params, reference, extra)
     cached = store.get_cached_result(cache_key)
     if cached:
         return cached
@@ -271,7 +284,7 @@ def evaluate(store, tile_id, payload):
     correction = None
     linear = frame.linear
     if pair is not None:
-        metrics, picture, legend = compute_pair(tile, frame, pair, area, params)
+        metrics, picture, legend = compute_pair(tile, frame, pair, area, params, store, payload)
     else:
         linear, correction = corrected_linear(tile, frame, params["apply_neutral"])
         metrics, picture, legend = compute_single(store, tile, frame, region, area, linear, correction, params, reference)

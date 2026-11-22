@@ -138,19 +138,47 @@ function optionInput(key,item) {
   return "";
 }
 
+function weaveMode() {
+  return state.tool === "weave" ? q("#field-analysis_mode")?.value || "spectral" : null;
+}
+
 function measureControls() {
   const tool=state.config.tools[state.tool];
   const all=state.tile.photos.filter(item=>item.registered_url);
   const match=field=>sources(tool.capture_pair?all.filter(item=>item.role===tool.capture_pair[field]):all,null,tool.capture_pair?"Auto if unique":"Base capture");
+  const repeat=weaveMode()==="repeat";
+  const pairFields=tool.capture_pair || (state.tool==="weave" && repeat);
+  const basePhoto=all.find(item=>item.registration_state==="base");
+  const otherPhoto=all.find(item=>item.registration_state!=="base") || basePhoto;
+  const photoFirst=pairFields
+    ? selectField(repeat?"Earlier photo":"First photo","photo_id",sources(all,basePhoto?.id,repeat?"Earlier registered capture":"Auto if unique"))
+    : selectField("Photo source","photo_id",match(0));
+  const photoSecond=pairFields
+    ? selectField(repeat?"Later photo":"Paired photo","comparison_id",sources(all,repeat?otherPhoto?.id:null,repeat?"Later registered capture":"Auto if unique"))
+    : checkField("Apply saved neutral balance","apply_neutral",true);
+  const plan=state.tile.survey_plan;
+  const repeatNotice=repeat ? (plan
+    ? `<p class="notice">Adopted survey axis ${n(plan.survey_axis_deg,0)}° · alternative ${n((plan.survey_axis_deg+90)%180,0)}° · ${plan.region_ids.length} saved sample region(s). Segments revisit the same physical stations; unresolved segments stay blank.</p>`
+    : `<p class="notice">No adopted survey direction yet. Choose and save the cradle direction before running a repeat check.</p>`)
+    : "";
+  const repeatActions=repeat ? `<div class="actions">${btn("Set / review survey direction","survey-edit","secondary","measure")}
+    ${plan?btn("Preview direction overlay","survey-preview-only","tiny secondary","frame"):""}</div>` : "";
+  const visibleFields=Object.entries(tool.fields).filter(([key])=>{
+    if (state.tool!=="weave") return true;
+    return repeat ? ["analysis_mode","segment_length","band_width"].includes(key)
+                  : ["analysis_mode","reference_axis","tolerance","minimum_pitch","maximum_pitch"].includes(key);
+  });
   return `<form id="measurement-form" class="form-stack">
     ${selectField("Measurement","kind",Object.entries(state.config.tools).map(([name,item])=>option(name,item.label,state.tool)).join(""))}
     <p class="soft">${e(tool.description)}</p>
-    ${selectField(tool.capture_pair?"First photo":"Photo source","photo_id",match(0))}
-    ${tool.capture_pair?selectField("Paired photo","comparison_id",match(1)):checkField("Apply saved neutral balance","apply_neutral",true)}
-    ${selectField("Region","region_id",regions())}
-    <div class="form-columns">${Object.entries(tool.fields).map(([key,item])=>optionInput(key,item)).join("")}</div>
+    ${photoFirst}
+    ${photoSecond}
+    ${state.tool==="weave"&&!repeat?checkField("Apply saved neutral balance","apply_neutral",true):""}
+    ${repeat?"":selectField("Region","region_id",regions())}
+    ${repeatNotice}${repeatActions}
+    <div class="form-columns">${visibleFields.map(([key,item])=>optionInput(key,item)).join("")}</div>
     ${["profile","marking","joint","blade"].includes(state.tool)?btn("Mark line on image","mark-profile","secondary","measure"):""}
-    <button class="button primary" type="submit">${icon("measure")}Run measurement</button>
+    <button class="button primary" type="submit">${icon("measure")}${repeat?"Run repeat spacing check":"Run measurement"}</button>
   </form>`;
 }
 
@@ -470,6 +498,64 @@ function lineForm() {
   prepareDrawing([start,end],2);
 }
 
+function surveyForm() {
+  const base=state.tile.photos.find(item=>item.registration_state==="base");
+  if (!base) throw Error("Set a base capture before choosing a survey direction.");
+  const plan=state.tile.survey_plan;
+  const hasPins=Boolean(plan?.pins?.length);
+  const axisChoices=[0,90].map(value=>option(value,value+"° cradle direction",plan?.survey_axis_deg ?? 0)).join("");
+  modal("Adopt the cradle survey direction",`
+    <p class="notice">The cradle only accepts two perpendicular physical directions. The choice is saved on the specimen and reused for every repeat check; the alternative direction is shown for reference.</p>
+    <div class="form-columns">${selectField("Adopted survey direction","survey_axis",axisChoices)}
+      ${checkField("Mark the two edge registration pins","use_pins",hasPins)}
+      <div id="pin-fields" ${hasPins?"":'hidden'}>
+      ${textField("Registration pin A · X","pin0x",plan?.pins?.[0]?.[0] ?? 0.12,"step='.001' min='0' max='1'")}
+      ${textField("Registration pin A · Y","pin0y",plan?.pins?.[0]?.[1] ?? 0.5,"step='.001' min='0' max='1'")}
+      ${textField("Registration pin B · X","pin1x",plan?.pins?.[1]?.[0] ?? 0.88,"step='.001' min='0' max='1'")}
+      ${textField("Registration pin B · Y","pin1y",plan?.pins?.[1]?.[1] ?? 0.5,"step='.001' min='0' max='1'")}
+      </div></div>
+    <p class="soft">Pin coordinates are fractions of the registered survey plane. Region outlines are labelled with their skew against the adopted axis.</p>
+    <div class="actions">${btn("Preview direction overlay","survey-preview","tiny secondary","frame")}
+    ${plan?btn("Clear saved direction","survey-clear","tiny danger","x"):""}</div>
+    <div id="survey-preview"></div>`,
+    "Save survey direction",async data=>{
+      const pins=data.has("use_pins")
+        ? [[Number(data.get("pin0x")),Number(data.get("pin0y"))],[Number(data.get("pin1x")),Number(data.get("pin1y"))]]
+        : [];
+      const body={survey_axis:Number(data.get("survey_axis")),pins};
+      const updated=await api(tileUrl()+"/survey",{method:"PUT",body:tileData(body)});
+      state.tile=updated;
+      await gatherTile();
+      commitModal();
+      toast("Survey direction saved for repeat checks.");
+      render();
+    },true);
+  q("#field-use_pins").addEventListener("change",event=>{
+    q("#pin-fields").hidden=!event.target.checked;
+  });
+}
+
+async function surveyPreviewRequest(container) {
+  const form=q("#dialog-form") || q("#measurement-form");
+  const data=new FormData(form);
+  const pins=data.has("use_pins")
+    ? [[Number(data.get("pin0x")),Number(data.get("pin0y"))],[Number(data.get("pin1x")),Number(data.get("pin1y"))]]
+    : [];
+  const token=dialogToken;
+  const res=await request(tileUrl()+"/survey/preview",{method:"POST",
+    body:{survey_axis:Number(data.get("survey_axis")),pins}});
+  const uri=URL.createObjectURL(await res.blob());
+  if (token!==dialogToken) {URL.revokeObjectURL(uri);return;}
+  const summary=JSON.parse(res.headers.get("X-Survey-Summary"));
+  const target=q(container);
+  if (target.dataset.blob) URL.revokeObjectURL(target.dataset.blob);
+  target.dataset.blob=uri;
+  const rows=summary.regions.map(item=>`<tr><td>${e(item.region_name)}</td><td>${n(item.grain_angle_deg,1)}°</td>
+    <td>${n(item.skew_deg,1)}°</td><td>${item.oblique==null?"—":item.oblique?"oblique":"aligned"}</td></tr>`).join("");
+  target.innerHTML=`<figure class="stage">${img(uri,"Survey direction overlay")}</figure>
+    ${table(["Sampling region","Own grain","Skew to adopted axis","Passage"],rows)}`;
+}
+
 function neutralForm() {
   const available=state.tile.regions.filter(item=>item.purpose==="neutral");
   if (!available.length) throw Error("Draw a region marked Neutral color card first.");
@@ -711,6 +797,24 @@ async function doAction(name,target) {
       });
     },
     "mark-profile":lineForm,
+    "survey-edit":()=>surveyForm(),
+    "survey-preview":async ()=>{await surveyPreviewRequest("#survey-preview");},
+    "survey-preview-only":async ()=>{
+      const plan=state.tile.survey_plan;
+      const res=await request(tileUrl()+"/survey/preview",{method:"POST",
+        body:{survey_axis:plan.survey_axis_deg,pins:plan.pins}});
+      const uri=URL.createObjectURL(await res.blob());
+      modal("Saved survey direction",`<figure class="stage">${img(uri,"Survey direction overlay")}</figure>
+        <p class="soft">Axis ${n(plan.survey_axis_deg,0)}° · ${plan.region_ids.length} saved sample region(s).</p>`,"",null,true);
+    },
+    "survey-clear":async ()=>{
+      await api(tileUrl()+"/survey",{method:"DELETE",body:tileData({})});
+      await gatherTile();
+      state.tile=await api(tileUrl());
+      toast("Survey direction cleared.");
+      surveyForm();
+      render();
+    },
     "trace-add":()=>geometryMeasurementForm("trace"),
     "area-add":()=>geometryMeasurementForm("area"),
     "metrology-open":()=>{state.metrologyActive=state.metrology.find(item=>item.id===id);render();},
@@ -815,6 +919,11 @@ document.addEventListener("change",event=>{
     const existing=q("#measurement-form");
     existing.outerHTML=measureControls();
     q("#field-kind")?.focus();
+  }
+  if (event.target.id==="field-analysis_mode") {
+    const existing=q("#measurement-form");
+    existing.outerHTML=measureControls();
+    q("#field-analysis_mode")?.focus();
   }
   if (event.target.id==="field-study_kind") studyOptions(event.target.value);
 });

@@ -6,10 +6,13 @@ TOOLS = {
         "label": "Yarn spacing and angle",
         "description": "Estimate the two main yarn directions and spacing from a visible fabric window.",
         "fields": {
+            "analysis_mode": {"kind": "choice", "label": "Reading mode", "default": "spectral", "choices": ["spectral", "repeat"]},
             "reference_axis": {"kind": "number", "label": "Approximate first yarn direction (degrees)", "default": 0, "min": 0, "max": 179, "step": 1},
             "tolerance": {"kind": "number", "label": "Search half-angle (degrees)", "default": 24, "min": 6, "max": 35, "step": 1},
             "minimum_pitch": {"kind": "number", "label": "Minimum spacing (px)", "default": 5, "min": 3, "max": 25, "step": 1},
             "maximum_pitch": {"kind": "number", "label": "Maximum spacing (px)", "default": 32, "min": 8, "max": 52, "step": 1},
+            "segment_length": {"kind": "number", "label": "Repeat segment length (px)", "default": 42, "min": 12, "max": 260, "step": 1},
+            "band_width": {"kind": "number", "label": "Repeat profile band width (px)", "default": 14, "min": 3, "max": 120, "step": 1},
         },
     },
     "dots": {

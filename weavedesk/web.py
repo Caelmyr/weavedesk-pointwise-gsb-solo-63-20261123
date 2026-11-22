@@ -46,6 +46,7 @@ from .photos import png_bytes
 from .review import parse_reviews, review_selection, save_reviews
 from .store import Store
 from .study import create_study, public_metrics
+from .survey import clear_survey_plan, save_survey_plan, survey_preview
 from .workspace import (
     calibrate,
     clear_calibration,
@@ -232,6 +233,27 @@ def register_specimens(api, store, heavy):
     @api.delete("/specimens/<specimen_id>/calibration")
     def calibration_remove(specimen_id):
         return jsonify(present_tile(clear_calibration(store, specimen_id, json_request())))
+
+    @api.post("/specimens/<specimen_id>/survey/preview")
+    def survey_preview_route(specimen_id):
+        tile = store.tile(specimen_id)
+        with heavy:
+            preview = survey_preview(store, tile, json_request())
+        response = image_response(preview["image"])
+        response.headers["X-Survey-Summary"] = json.dumps(preview["summary"], separators=(",", ":"))
+        return response
+
+    @api.put("/specimens/<specimen_id>/survey")
+    def survey_save(specimen_id):
+        with heavy:
+            updated, summary = save_survey_plan(store, specimen_id, json_request())
+        response = present_tile(updated)
+        response["survey_summary"] = summary
+        return jsonify(response)
+
+    @api.delete("/specimens/<specimen_id>/survey")
+    def survey_clear(specimen_id):
+        return jsonify(present_tile(clear_survey_plan(store, specimen_id, json_request())))
 
 
 def register_measurements(api, store, heavy):

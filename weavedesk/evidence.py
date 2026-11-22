@@ -101,9 +101,16 @@ def result_metrics_table(record):
         columns = ("dot", "area_px", "area_mm2", "axis_ratio", "major_angle_deg", "center")
         rows = ([item[key] for key in columns] for item in metrics["rows"])
     elif kind == "weave":
-        fields = ("family", "angle_degrees", "pitch", "peak_to_background")
-        columns = ("unit", *fields)
-        rows = ([metrics["unit"], *(item[key] for key in fields)] for item in metrics["rows"])
+        if metrics.get("mode") == "repeat":
+            columns = (
+                "region_name", "segment", "segment_length", "support_a_percent", "support_b_percent",
+                "pitch_a", "pitch_b", "pitch_change", "pitch_change_percent", "status", "blank_reason",
+            )
+            rows = ([item[key] for key in columns] for item in metrics["segments"])
+        else:
+            fields = ("family", "angle_degrees", "pitch", "peak_to_background")
+            columns = ("unit", *fields)
+            rows = ([metrics["unit"], *(item[key] for key in fields)] for item in metrics["rows"])
     elif kind == "blade":
         fields = ("position", "center", "state", "width", "endpoints")
         columns = ("unit", *fields)
@@ -292,7 +299,8 @@ def summarize_result(record):
     metrics = {
         "color": ("median_lab", "swatch", "delta_e_from_tile_median"),
         "dots": ("dot_count", "median_area_px", "ink_area_percent", "unresolved_ink_percent"),
-        "weave": ("axis_a_pitch", "axis_b_pitch", "crossing_angle"),
+        "weave": ("axis_a_pitch", "axis_b_pitch", "crossing_angle", "mode", "measured_segments",
+                  "blank_segments", "median_change_percent"),
         "coverage": ("percent", "measured"),
         "defects": ("total_observations", "reported_observations"),
         "glare": ("strong_glare_percent", "hotspot_count"),
@@ -311,7 +319,7 @@ def summarize_result(record):
         "id", "kind", "label", "tile_id", "source_version", "created_at", "version", "basis",
     )}
     summary["tile_name"] = record["provenance"]["specimen"]["name"]
-    summary["brief"] = {key: record["metrics"][key] for key in metrics}
+    summary["brief"] = {key: record["metrics"].get(key) for key in metrics}
     summary["overlay_url"] = f"/api/results/{record['id']}/image/overlay"
     return summary
 

@@ -8,7 +8,11 @@ export function metricSet(record) {
   const rows = {
     color: () => [["Median L*",n(m.median_lab[0])],["Within-plane p90 ΔE",n(m.delta_e_from_tile_median["90"])],["Pixels measured",n(m.pixels,0)]],
     dots: () => [["Resolved knots",m.dot_count],["Median area (px²)",n(m.median_area_px,2)],["Resolved knot area",percent(m.ink_area_percent)]],
-    weave: () => [["Family A pitch",m.axis_a_pitch==null?"—":`${n(m.axis_a_pitch,3)} ${m.unit}`],["Family B pitch",m.axis_b_pitch==null?"—":`${n(m.axis_b_pitch,3)} ${m.unit}`],["Crossing",m.crossing_angle==null?"—":`${n(m.crossing_angle,1)}°`]],
+    weave: () => m.mode === "repeat"
+      ? [["Survey axis", n(m.survey_axis_deg, 0) + "°"],
+         ["Measured segments", `${m.measured_segments}/${m.measured_segments + m.blank_segments}`],
+         ["Median spacing change", m.median_change_percent == null ? "—" : `${n(m.median_change_percent, 2)}%`]]
+      : [["Family A pitch",m.axis_a_pitch==null?"—":`${n(m.axis_a_pitch,3)} ${m.unit}`],["Family B pitch",m.axis_b_pitch==null?"—":`${n(m.axis_b_pitch,3)} ${m.unit}`],["Crossing",m.crossing_angle==null?"—":`${n(m.crossing_angle,1)}°`]],
     coverage: () => [["Fabric",percent(m.percent.glazed)],["Mount",percent(m.percent.bare)],["Mixed",percent(m.percent.mixed)],["Unmeasured",percent(m.percent.unmeasured)]],
     defects: () => {
       const reviewed = Object.values(record.decisions);
@@ -128,9 +132,28 @@ function referenceDetail(m) {
     <p class="notice">${e(m.capture_note)}</p>`;
 }
 
+function weaveRepeatDetail(m) {
+  const changeValues = m.segments.map(item => item.pitch_change_percent);
+  return `<h3>Repeat spacing on the ${n(m.survey_axis_deg, 0)}° survey axis</h3>
+    <p class="plot-note">${e(m.note)}</p>
+    ${table(["Region","Segments","Measured","Blank","Median earlier pitch","Median later pitch","Median change"],
+      m.region_rows.map(item => [e(item.region_name), item.segments, item.measured_segments, item.blank_segments,
+        item.median_pitch_a == null ? "—" : `${n(item.median_pitch_a, 3)} ${m.unit}`,
+        item.median_pitch_b == null ? "—" : `${n(item.median_pitch_b, 3)} ${m.unit}`,
+        item.median_change_percent == null ? "—" : `${n(item.median_change_percent, 2)}%`]))}
+    ${plot([{values: changeValues, color: "#b26a4a"}], "Segment spacing change (%)", {})}
+    <details><summary>Segment readings (blank segments are not borrowed from neighbours)</summary>
+    ${table(["Region","Segment","Earlier pitch","Later pitch","Change","Status","Reason"],
+      m.segments.map(item => [e(item.region_name), item.segment,
+        item.pitch_a == null ? "—" : n(item.pitch_a, 3),
+        item.pitch_b == null ? "—" : n(item.pitch_b, 3),
+        item.pitch_change_percent == null ? "—" : `${n(item.pitch_change_percent, 2)}%`,
+        item.status, item.status === "blank" ? e(item.blank_reason) : ""]))}</details>`;
+}
+
 function details(record) {
   const render = {
-    weave:m=>`<h3>Visible yarn families</h3><p class="plot-note">${e(m.note)}</p>${table(["Family","Direction (°)",`Pitch (${m.unit})`,"Peak / background"],m.rows.map(item=>[item.family,n(item.angle_degrees,2),n(item.pitch,3),n(item.peak_to_background,2)]))}`,
+    weave:m=>m.mode === "repeat" ? weaveRepeatDetail(m) : `<h3>Visible yarn families</h3><p class="plot-note">${e(m.note)}</p>${table(["Family","Direction (°)",`Pitch (${m.unit})`,"Peak / background"],m.rows.map(item=>[item.family,n(item.angle_degrees,2),n(item.pitch,3),n(item.peak_to_background,2)]))}`,
     dots:m=>`<h3>Isolated yarn knots</h3><p class="plot-note">${e(m.note)}</p>${table(["Knot","Area (px²)","Area (mm²)","Major/minor","Angle (°)"],m.rows.map(r=>[
       r.dot, n(r.area_px,0), n(r.area_mm2,5), n(r.axis_ratio,2), n(r.major_angle_deg,1)
     ]))}`,

@@ -31,6 +31,7 @@ from .parameters import TOOLS, analysis_parameters
 from .profile import measure_profile
 from .dots import measure_dots
 from .store import key_for
+from .survey import repeat_parameters, repeat_spacing
 from .texture import measure_texture
 from .weave import measure_weave
 
@@ -135,6 +136,19 @@ def resolve_parameters(store, tile, payload):
     kind = params["kind"]
     setting = TOOLS[kind]
     roles = setting.get("capture_pair")
+    if kind == "weave" and params["options"].get("analysis_mode") == "repeat":
+        plan = tile.get("survey_plan")
+        if plan is None:
+            raise InputError("Adopt and save a cradle survey direction before running a repeat check.")
+        params["photo_id"] = selected_capture(tile, params["photo_id"])
+        params["comparison_id"] = selected_capture(tile, params["comparison_id"])
+        if params["comparison_id"] == params["photo_id"]:
+            raise InputError("Choose the earlier and the later registered capture for the repeat check.")
+        params["options"]["segment_length"], params["options"]["band_width"] = repeat_parameters(
+            {"segment_length": params["options"]["segment_length"],
+             "band_width": params["options"]["band_width"]},
+        )
+        return params, None
     params["photo_id"] = selected_capture(tile, params["photo_id"], roles[0] if roles else None)
     params["comparison_id"] = selected_capture(tile, params["comparison_id"], roles[1]) if roles else None
     if not roles and payload.get("comparison_id"):
@@ -270,8 +284,16 @@ def evaluate(store, tile_id, payload):
     pair = specimen_frame(store.blobs, tile, params["comparison_id"]) if params["comparison_id"] else None
     correction = None
     linear = frame.linear
-    if pair is not None:
+    kind = params["kind"]
+    options = params["options"]
+    if pair is not None and not (kind == "weave" and options.get("analysis_mode") == "repeat"):
         metrics, picture, legend = compute_pair(tile, frame, pair, area, params)
+    elif kind == "weave" and options.get("analysis_mode") == "repeat":
+        metrics, picture = repeat_spacing(
+            store, tile, tile["survey_plan"], params["photo_id"], params["comparison_id"],
+            options["segment_length"], options["band_width"],
+        )
+        legend = None
     else:
         linear, correction = corrected_linear(tile, frame, params["apply_neutral"])
         metrics, picture, legend = compute_single(store, tile, frame, region, area, linear, correction, params, reference)

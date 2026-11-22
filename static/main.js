@@ -1,5 +1,5 @@
 import {q,qa,icon,e,btn,link,badge,empty,option,img,field,textField,selectField,numField,checkField,areaField,api,request,date,n,percent,plot,stat,table} from "./widgets.js";
-import {resultCard,specimenResultRows} from "./results.js";
+import {changeText,resultCard,specimenResultRows} from "./results.js";
 
 const state={page:"collection",tile:null,tiles:[],tab:"captures",tool:"color",capture:null,viewer:"raw",layer:"overlay",result:null,config:null,results:[],refs:[],packets:[],study:null,studies:[],query:""};
 const dialog=q("#dialog");
@@ -624,6 +624,95 @@ async function studyForm() {
   studyOptions(q("#field-study_kind",dialog).value);
 }
 
+function laterSlotChoices(target,key,selected) {
+  return target.observations.map(observation=>{
+    const owner=observation.used_by;
+    const label=`${observation.key} · ${observation.type} · ${n(observation.area_pixels,0)} px${owner && owner!==key ? ` · used by ${owner}` : ""}`;
+    return option(`${target.id}|${observation.key}`,label,selected);
+  }).join("");
+}
+
+async function exchangeForm() {
+  const record=state.result;
+  const view=record.correspondence_view;
+  if (!view) throw Error("Open this measurement again before linking observations.");
+  const linked=view.entries.filter(item=>item.after && (item.status==="confirmed"||item.status==="tentative"));
+  if (linked.length<2) throw Error("Two observations need a current follow-up before they can be swapped.");
+  const choices=selected=>linked.map(item=>option(item.key,`${item.key} · now later ${item.after.observation.key} · ${item.status}`,selected)).join("");
+  const first=linked[0].key, second=linked[1].key;
+  const slots=view.targets.flatMap(item=>item.observations.map(observation=>({item,observation})));
+  const slotChoices=current=>slots.map(({item,observation})=>{
+    const owner=observation.used_by;
+    const label=`${observation.key} · ${observation.type} · later ${date(item.created_at)}${owner ? ` · now ${owner}` : ""}`;
+    return option(`${item.id}|${observation.key}`,label,current);
+  }).join("");
+  const slotOf=item=>item.after ? `${item.after.result_id}|${item.after.observation.key}` : "";
+  modal("Swap two follow-ups",`
+    <p class="notice">Exchange the later observations held by two original IDs in one save. Both IDs keep their first-capture records, notes and status. The save is checked once after both changes, so a pair can trade places without either ID being stored twice.</p>
+    ${selectField("First original ID","first_key",choices(first))}
+    ${selectField("Later observation for the first ID","first_slot",slotChoices(slotOf(linked[1])))}
+    ${selectField("Second original ID","second_key",choices(second))}
+    ${selectField("Later observation for the second ID","second_slot",slotChoices(slotOf(linked[0])))}`,"Swap follow-ups",async data=>{
+      const a=linked.find(item=>item.key===data.get("first_key"));
+      const b=linked.find(item=>item.key===data.get("second_key"));
+      if (!a || !b || a.key===b.key) throw Error("Choose two different original IDs.");
+      const entries=[a,b].map(source=>{
+        const [targetResult,targetKey]=String(data.get(source===a?"first_slot":"second_slot")).split("|");
+        if (!targetResult||!targetKey) throw Error("Choose a later observation for each original ID.");
+        return {key:source.key,status:source.status,note:source.note,target_result_id:targetResult,target_key:targetKey};
+      });
+      const updated=await api(`/api/results/${record.id}/correspondence`,{method:"PATCH",body:{version:record.version,entries}});
+      updated.correspondence_view=await api(`/api/results/${record.id}/correspondence`);
+      state.result=updated;
+      await gatherTile();
+      commitModal();
+      toast("Two follow-ups swapped in one review.");
+      render();
+    });
+}
+
+async function correspondenceForm(key) {
+  const record=state.result;
+  const view=record.correspondence_view;
+  if (!view) throw Error("Open this measurement again before linking observations.");
+  const entry=view.entries.find(item=>item.key===key);
+  if (!entry) throw Error("This observation is no longer in the measurement.");
+  const targets=view.targets;
+  if (!targets.length) throw Error("Save a later surface-observation measurement for this specimen first.");
+  const original=entry.before.observation;
+  const chosenTarget=entry.after_measurement?.id || targets[0].id;
+  const targetChoices=targets.map(item=>option(item.id,`${item.label} · ${date(item.created_at)} · ${item.photo.display_name}`,chosenTarget)).join("");
+  const chosenLater=targets.find(item=>item.id===chosenTarget) || targets[0];
+  const selectedSlot=entry.after ? `${entry.after.result_id}|${entry.after.observation.key}` : "";
+  const slotChoices=laterSlotChoices(chosenLater,key,selectedSlot);
+  const statusChoices=["confirmed","tentative","missing","unassigned"].map(status=>option(status,({confirmed:"Confirmed correspondence",tentative:"Tentative correspondence",missing:"Missing evidence",unassigned:"Not linked"})[status],entry.status)).join("");
+  const afterBlock=entry.after?`<div class="metrics">${stat("Original centre",original.normalized_center.map(value=>n(value,3)).join(", "))}${stat("Later centre",entry.after.observation.normalized_center.map(value=>n(value,3)).join(", "))}${stat("Centre offset",entry.normalized_distance==null?"—":`${n(entry.normalized_distance*100,2)}%`)}${stat("Visible extent",changeText(entry.change))}</div>`:"";
+  modal("Follow observation "+key,`
+    <p class="notice">${e(key)} keeps its ${n(original.area_pixels,0)} px · ${e(original.type)} record from the first capture. A later observation can carry only one original ID; when the marked eye is not shown, record missing evidence instead of guessing.</p>
+    ${table(["Original source","Value"],[["Measurement",entry.before.label],["Capture",entry.before.photo.display_name],["Centre",original.normalized_center.map(value=>n(value,3)).join(", ")],["Bounds",original.bounds.map(value=>n(value,3)).join(", ")],["Area",`${n(original.area_pixels,0)} px`]])}
+    ${selectField("Correspondence","status",statusChoices)}
+    ${selectField("Checked later measurement","target_result_id",targetChoices)}
+    ${selectField("Later observation on that capture","target_slot",option("","No later observation in this capture",selectedSlot)+slotChoices)}
+    ${areaField("Correspondence note","note",entry.note,240)}
+    ${afterBlock}`,"Save correspondence",async data=>{
+      const status=data.get("status");
+      const slot=status==="confirmed"||status==="tentative" ? String(data.get("target_slot")) : "";
+      if ((status==="confirmed"||status==="tentative")&&!slot) throw Error("Choose the later observation that shows this worn edge.");
+      const [targetResult,targetKey]=slot.split("|");
+      const payload={version:record.version,entries:[{
+        key,status,note:data.get("note"),
+        target_result_id:status==="unassigned" ? null : (targetResult || data.get("target_result_id")),
+        target_key:status==="missing"||status==="unassigned" ? null : targetKey,
+      }]};
+      state.result=await api(`/api/results/${record.id}/correspondence`,{method:"PATCH",body:payload});
+      state.result.correspondence_view=await api(`/api/results/${record.id}/correspondence`);
+      await gatherTile();
+      commitModal();
+      toast("Observation correspondence saved.");
+      render();
+    },true);
+}
+
 function parsedOptions(data,tool) {
   return Object.fromEntries(Object.entries(tool.fields).map(([key,config])=>{
     if (config.kind==="point") return [key,[Number(data.get(key+"-0")),Number(data.get(key+"-1"))]];
@@ -642,6 +731,7 @@ async function runMeasurement(data) {
   }});
   if (revision!==travel) return;
   state.result=result;
+  if (result.kind==="defects") result.correspondence_view=await api(`/api/results/${result.id}/correspondence`);
   state.layer="overlay";
   await gatherTile();
   toast("Measurement saved.");
@@ -722,6 +812,7 @@ async function doAction(name,target) {
       modal("Review "+marker, selectField("Disposition","decision",["review","confirm","dismiss"].map(item=>option(item,item,old.decision||"review")).join(""))+
         areaField("Observation note","notes",old.notes,240),"Save observation",async data=>{
         state.result=await api(`/api/results/${record.id}/observations/${marker}`,{method:"PUT",body:{version:record.version,...plainData(data)}});
+        if (state.result.kind==="defects") state.result.correspondence_view=await api(`/api/results/${record.id}/correspondence`);
         commitModal();
         toast("Observation reviewed.");
         render();
@@ -729,6 +820,7 @@ async function doAction(name,target) {
     },
     "result-open":async ()=>{
       state.result=await api("/api/results/"+id);
+      if (state.result.kind==="defects") state.result.correspondence_view=await api(`/api/results/${id}/correspondence`);
       state.layer="overlay";
       state.tab="measure";
       render();
@@ -736,9 +828,13 @@ async function doAction(name,target) {
     "result-layer":()=>{state.layer=value;render();},
     "defect-choice":async ()=>{
       state.result=await api(`/api/results/${state.result.id}/observations/${marker}`,{method:"PUT",body:{version:state.result.version,decision:value,notes:""}});
+      if (state.result.kind==="defects") state.result.correspondence_view=await api(`/api/results/${state.result.id}/correspondence`);
       toast("Observation reviewed.");
+      await gatherTile();
       render();
     },
+    "defect-correspondence":()=>correspondenceForm(marker),
+    "defect-correspondence-pair":exchangeForm,
     pin:pinForm,
     "study-add":studyForm,
     "study-open":()=>{state.study=state.studies.find(item=>item.id===id);render();},
@@ -817,6 +913,12 @@ document.addEventListener("change",event=>{
     q("#field-kind")?.focus();
   }
   if (event.target.id==="field-study_kind") studyOptions(event.target.value);
+  if (event.target.id==="field-target_result_id") {
+    const view=state.result?.correspondence_view;
+    const target=view?.targets.find(item=>item.id===event.target.value);
+    const slot=q("#field-target_slot",dialog);
+    if (target&&slot) slot.innerHTML=option("","No later observation in this capture","")+laterSlotChoices(target,"", "");
+  }
 });
 
 dialog.addEventListener("close",()=>{

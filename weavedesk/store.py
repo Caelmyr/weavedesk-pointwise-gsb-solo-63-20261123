@@ -320,6 +320,16 @@ class Store:
             event(conn, result["tile_id"], "review", f"Updated {edited} defect review decision(s)")
             return result
 
+    def save_correspondence(self, identifier, expected_version, entries):
+        with self.transaction(write=True) as conn:
+            result = self._result(conn, identifier)
+            self.require_version(result, expected_version)
+            result["correspondence"] = entries
+            result["version"] += 1
+            conn.execute("UPDATE results SET document=? WHERE id=?", (document(result), result["id"]))
+            event(conn, result["tile_id"], "correspondence", f"Updated {len(entries)} observation correspondence(s)")
+            return result
+
     def _reference(self, conn, identifier):
         chosen = identity(identifier, "Reference ID")
         row = conn.execute("SELECT document FROM library WHERE id=?", (chosen,)).fetchone()

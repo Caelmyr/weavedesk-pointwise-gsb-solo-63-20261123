@@ -12,7 +12,9 @@ export function metricSet(record) {
     coverage: () => [["Fabric",percent(m.percent.glazed)],["Mount",percent(m.percent.bare)],["Mixed",percent(m.percent.mixed)],["Unmeasured",percent(m.percent.unmeasured)]],
     defects: () => {
       const reviewed = Object.values(record.decisions);
-      return [["Observed",m.total_observations],["Confirmed",reviewed.filter(item=>item.decision==="confirm").length],["Dismissed",reviewed.filter(item=>item.decision==="dismiss").length]];
+      const followed = Object.fromEntries(["confirmed","tentative","missing"].map(status=>[status,0]));
+      (record.correspondence_view?.entries || []).forEach(item=>{ if (item.status in followed) followed[item.status]++; });
+      return [["Observed",m.total_observations],["Confirmed",reviewed.filter(item=>item.decision==="confirm").length],["Dismissed",reviewed.filter(item=>item.decision==="dismiss").length],["Later match",`${followed.confirmed} confirmed · ${followed.tentative} tentative`],["Missing evidence",followed.missing]];
     },
     glare: () => [["Strong glare",percent(m.strong_glare_percent)],["Counted hotspots",m.hotspot_count],["Paired support",percent(m.support.overlap_percent)]],
     direction: () => [["Left-bright detail",percent(m.left_strong_percent)],["Right-bright detail",percent(m.right_strong_percent)],["Paired support",percent(m.support.overlap_percent)]],
@@ -76,13 +78,36 @@ function bladeDetail(m) {
     <details><summary>Cross-section readings</summary>${table(columns,rows)}</details>`;
 }
 
+const correspondenceTone = {confirmed:"ready",tentative:"caution",missing:"",unassigned:""};
+const correspondenceLabel = {confirmed:"Confirmed",tentative:"Tentative",missing:"Missing evidence",unassigned:"Not linked"};
+
+export function changeText(change) {
+  if (!change) return "";
+  if (!change.state) return change.reason || "";
+  const magnitude = change.delta_percent == null ? "" : ` · ${n(Math.abs(change.delta_percent),1)}%`;
+  if (change.state === "similar") return `Same visible extent${magnitude}`;
+  return `${change.state === "enlarged" ? "Enlarged" : "Shrunk"}${magnitude}`;
+}
+
 function defectsDetail(record) {
   const markers=record.metrics.observations;
   if (!markers.length) return "<p>No spots exceeded this run's current thresholds.</p>";
+  const followed = new Map((record.correspondence_view?.entries || []).map(item=>[item.key,item]));
+  const counts=Object.fromEntries(["confirmed","tentative","missing","unassigned"].map(status=>[status,0]));
+  followed.forEach(item=>{counts[item.status]=(counts[item.status]||0)+1;});
   return `<h3>Review local observations</h3>
+    <p class="soft">${counts.confirmed} confirmed · ${counts.tentative} tentative · ${counts.missing} missing · ${counts.unassigned} not linked
+      ${counts.confirmed+counts.tentative>=2?btn("Swap two follow-ups","defect-correspondence-pair","tiny secondary"):""}</p>
     <div class="divider-list scroll-list">${markers.map(marker=>{
       const decision=record.decisions[marker.key]?.decision || "review";
-      return `<div class="row"><div class="grow"><strong>${e(marker.key)} · ${e(marker.type)}</strong><br><small>${n(marker.area_pixels,0)} px · ${e(marker.polarity)} · ${e(decision)}</small></div>
+      const follow=followed.get(marker.key);
+      const status=follow?.status || "unassigned";
+      const after=follow?.after ? `Later ${e(follow.after.observation.key)} · ${e(follow.after.photo.display_name)}`
+        : (status==="missing" && follow?.after_measurement ? `Checked ${e(follow.after_measurement.photo.display_name)}` : "");
+      const note=status==="unassigned" ? "" : (follow?.change?.reason && !follow.change.state ? follow.change.reason : changeText(follow?.change));
+      return `<div class="row"><div class="grow"><strong>${e(marker.key)} · ${e(marker.type)}</strong><br><small>${n(marker.area_pixels,0)} px · ${e(marker.polarity)} · ${e(decision)}</small>
+        <br><small>${badge(correspondenceLabel[status],correspondenceTone[status])} ${after ? e(after) : ""} ${note ? "· " + e(note) : ""}</small></div>
+        ${btn("Follow-up","defect-correspondence","tiny secondary",null,`data-marker="${e(marker.key)}"`)}
         ${btn("Confirm","defect-choice","tiny secondary",null,`data-marker="${e(marker.key)}" data-value="confirm"`)}
         ${btn("Dismiss","defect-choice","tiny ghost",null,`data-marker="${e(marker.key)}" data-value="dismiss"`)}
         ${btn("Note","defect-note","tiny ghost",null,`data-marker="${e(marker.key)}"`)}</div>`;

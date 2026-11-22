@@ -55,6 +55,11 @@ def result_metrics_table(record):
             decision = decisions.get(marker["key"], {})
             row = [marker[key] for key in columns[:-2]]
             rows.append([*row, decision.get("decision", ""), decision.get("notes", "")])
+        correspondence = record.get("correspondence", {})
+        for row, marker in zip(rows, metrics["observations"]):
+            link = correspondence.get(marker["key"], {})
+            row.extend([link.get("target_result_id", ""), link.get("target_key", ""), link.get("status", "")])
+        columns = (*columns, "later_measurement", "later_observation", "later_status")
     elif kind == "coverage":
         columns = ("relative_top", "relative_bottom", "measured", "bare_percent", "mixed_percent", "glazed_percent",
                    "unmeasured_percent")

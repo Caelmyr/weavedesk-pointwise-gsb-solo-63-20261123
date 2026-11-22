@@ -6,6 +6,7 @@ from threading import BoundedSemaphore
 from flask import Blueprint, Flask, Response, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
+from .correspondence import load_correspondence, parse_correspondence, save_correspondence
 from .analysis import approve_reference, evaluate
 from .demo import load_training, preview_photo
 from .evidence import (
@@ -283,6 +284,18 @@ def register_measurements(api, store, heavy):
         choices = parse_reviews(data)
         with heavy:
             record = save_reviews(store, measurement_id, model_version(data), choices)
+        return jsonify(record)
+
+    @api.get("/results/<measurement_id>/correspondence")
+    def correspondence_list(measurement_id):
+        return jsonify(load_correspondence(store, measurement_id))
+
+    @api.patch("/results/<measurement_id>/correspondence")
+    def correspondence_update(measurement_id):
+        data = json_request()
+        revision, choices = parse_correspondence(data)
+        with heavy:
+            record = save_correspondence(store, measurement_id, revision, choices)
         return jsonify(record)
 
     @api.get("/library")

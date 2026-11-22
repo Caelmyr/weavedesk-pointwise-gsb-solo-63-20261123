@@ -109,6 +109,7 @@ li+li{margin-top:4px}
 .stage img{width:100%;max-height:630px;object-fit:contain}
 .workspace-viewer .stage{min-height:280px}
 .stage small{padding:23px;color:#e0e6d4}
+.stage figcaption{padding:9px 12px;color:#e4ead9;font-size:12px;background:#1e2c27;width:100%;text-align:center}
 .stage-foot{margin:7px 0 0;color:var(--muted);font-size:12px}
 .field{display:grid;gap:5px;min-width:0}
 .field label,.field > span{font-size:12px;color:#45534a;font-weight:650}

@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import BoundedSemaphore
 
 from flask import Blueprint, Flask, Response, jsonify, request, send_file, send_from_directory
+from PIL import Image
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from .analysis import approve_reference, evaluate
@@ -13,6 +14,7 @@ from .evidence import (
     create_evidence,
     evidence_zip,
     filename_stem,
+    outline_polygon,
     result_metrics_table,
     specimen_html,
     study_table,
@@ -32,6 +34,7 @@ from .model import (
     InputError,
     MissingError,
     dictionary,
+    digest_identity,
     enumeration,
     flag_record_fields,
     identity,
@@ -404,7 +407,28 @@ def register_desks(api, store, heavy):
         packet = store.received(received_id)
         measurement = match_slot(packet["measurements"], identity(entry_id, "Measurement ID"), "measurement")
         image = enumeration(layer, ("source", "overlay", "paired"), "Measurement layer")
-        return png_blob(store, measurement["pictures"].get(image))
+        digest = measurement["pictures"].get(image)
+        if digest is None:
+            raise MissingError("No image exists for this selected layer.")
+        if request.args.get("cover") == "1" and measurement.get("cover"):
+            with Image.open(store.blobs.require(digest)) as source:
+                return image_response(outline_polygon(source.convert("RGBA"), measurement["cover"]["plane_corners"]))
+        return png_blob(store, digest)
+
+    @api.get("/received/<received_id>/original/<entry_id>")
+    def received_original(received_id, entry_id):
+        packet = store.received(received_id)
+        digest = digest_identity(entry_id, "Original digest")
+        source = next((item for item in packet["originals"] if item["digest"] == digest), None)
+        if source is None:
+            raise MissingError("Original capture not found.")
+        preview_digest = source.get("preview_digest")
+        if preview_digest is None:
+            raise MissingError("Original preview not found.")
+        if request.args.get("cover") == "1" and source.get("cover_quad"):
+            with Image.open(store.blobs.require(preview_digest)) as picture:
+                return image_response(outline_polygon(picture.convert("RGBA"), source["cover_quad"]))
+        return png_blob(store, preview_digest)
 
     @api.get("/specimens/<specimen_id>/metrology")
     def geometry_records(specimen_id):

@@ -7,8 +7,18 @@ from pathlib import PurePath
 import re
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from PIL import Image, ImageDraw
+
 from .art import comparison_sheet, load_artifact_picture, stored_preview
+from .geometry import specimen_frame
 from .model import InputError, dictionary, enumeration, flag, string, tags, unique_ids
+from .photos import png_bytes
+from .redaction import (
+    apply_plane_cover,
+    cover_spec,
+    cover_summary,
+    redact_original,
+)
 from .store import document
 
 
@@ -134,9 +144,13 @@ def source_index(tile, results):
             current = next((item for item in tile["photos"] if item["id"] == capture["id"]), None)
             originals[digest] = {
                 "digest": digest,
+                "original_digest": digest,
                 "name": capture["display_name"],
                 "role": capture["role"],
                 "mime": current["original_mime"] if current else None,
+                "capture_id": capture["id"],
+                "upright_size": capture.get("upright_size"),
+                "capture_role": capture["role"],
             }
     return list(originals.values())
 
@@ -149,6 +163,91 @@ def pinned_fields(store, request):
     view = enumeration(data.get("view", "overlay"), ("overlay", "source"), "Export image")
     include_sources = flag(data.get("include_sources", False), "Include original uploads")
     return data, targets, title, notes, view, include_sources
+
+
+def capture_frames(store, tile, records):
+    """Working frames for every capture a packet draws on, in a stable order."""
+    capture_ids = {}
+    for record in records:
+        provenance = record["provenance"]
+        for capture in (provenance["photo"], provenance["paired_photo"]):
+            if capture and capture["id"] not in capture_ids:
+                capture_ids[capture["id"]] = None
+    frames = {capture_id: specimen_frame(store.blobs, tile, capture_id) for capture_id in capture_ids}
+    return frames
+
+
+def cover_outline(image, quad):
+    """Copy of a received picture with the covered area outlined rather than filled."""
+    result = image.copy()
+    width, height = result.size
+    points = [(x * width - 0.5, y * height - 0.5) for x, y in quad]
+    draw = ImageDraw.Draw(result)
+    stroke = max(2, round(min(width, height) / 220))
+    draw.line([*points, points[0]], fill=(30, 38, 43, 255), width=stroke + 2)
+    draw.line([*points, points[0]], fill=(255, 214, 102, 255), width=stroke)
+    return result
+
+
+def outline_polygon(image, quad):
+    return cover_outline(image, quad)
+
+
+def redacted_pictures(store, record, spec):
+    pictures = {
+        layer: stored_preview(apply_plane_cover(load_artifact_picture(store.blobs, digest), spec), store.blobs)
+        if digest else None
+        for layer, digest in record["pictures"].items()
+    }
+    sizes = {}
+    for layer, digest in pictures.items():
+        if not digest:
+            continue
+        with Image.open(store.blobs.require(digest)) as picture:
+            sizes[layer] = list(picture.size)
+    return pictures, {
+        "plane_corners": spec["plane_corners"],
+        "width_mm": spec["width_mm"],
+        "height_mm": spec["height_mm"],
+        "fill_rgb": spec["fill_rgb"],
+        "layers": sizes,
+    }
+
+
+def redacted_sources(store, originals, spec, frames):
+    covered_originals = []
+    members = {}
+    for source in originals:
+        frame = frames.get(source.get("capture_id"))
+        if frame is None:
+            raise InputError("An attached original is not one of the packet's registered captures.")
+        raw = store.blobs.get(source["original_digest"])
+        covered, quad, size = redact_original(raw, spec, frame.transform)
+        digest = store.blobs.put(covered)
+        stem = filename_stem(PurePath(source["name"]).stem, "original")
+        covered_originals.append({
+            "digest": digest,
+            "name": source["name"],
+            "role": source["role"],
+            "mime": "image/png",
+            "media": "image/png",
+            "covered": True,
+            "redacted_name": f"{stem}-covered-{digest[:10]}.png",
+            "original_digest": source["original_digest"],
+            "original_mime": source["mime"],
+            "capture_id": source["capture_id"],
+            "capture_role": source.get("capture_role"),
+            "upright_size": size,
+            "cover_quad": quad,
+            "cover_quad_name": f"originals/{stem}-cover-{digest[:10]}.json",
+        })
+        members[digest] = {
+            "quad": quad,
+            "file": covered_originals[-1]["cover_quad_name"],
+            "layer": "original",
+            "capture_id": source["capture_id"],
+        }
+    return covered_originals, members
 
 
 def image_card(store, result, view):
@@ -179,10 +278,23 @@ def create_evidence(store, identifier, payload):
     tile, records = store.sources_for_evidence(identifier, targets)
     if any(result["tile_id"] != tile["id"] for result in records):
         raise InputError("An evidence packet can contain measurements from its own specimen only.")
+    spec = cover_spec(data.get("redaction"), tile) if data.get("redaction") else None
     originals = source_index(tile, records) if include_sources else []
-    byte_total = sum(store.blobs.require(item["digest"]).stat().st_size for item in originals)
+    byte_total = sum(store.blobs.require(item["original_digest"]).stat().st_size for item in originals)
     if byte_total > SOURCE_TOTAL_BYTES:
         raise InputError("Selected originals exceed the packet limit of 60 MiB. Omit originals or pin fewer measurements.")
+    members = {}
+    covered = []
+    if spec is not None:
+        if not include_sources:
+            raise InputError("A covered packet must attach the original captures it covers, so the recipient can compare them.")
+        frames = capture_frames(store, tile, records)
+        covered, members = redacted_sources(store, originals, spec, frames)
+        rewritten = []
+        for record in records:
+            pictures, cover = redacted_pictures(store, record, spec)
+            rewritten.append({**record, "pictures": pictures, "cover": cover})
+        records = rewritten
     return store.save_evidence({
         "title": title,
         "notes": notes,
@@ -192,10 +304,11 @@ def create_evidence(store, identifier, payload):
         "tile_version_at_pin": tile["version"],
         "synthetic": tile["synthetic"],
         "view": view,
-        "originals": originals,
+        "originals": covered if spec is not None else originals,
         "original_bytes": byte_total,
         "measurements": records,
         "sheets": evidence_sheets(store, title, records, view),
+        "redaction": cover_summary(spec, members) if spec is not None else None,
     })
 
 
@@ -229,12 +342,29 @@ def exported_image_name(record, view):
     return f"measurements/{result_entry_names(record)}-{view}.png"
 
 
+def exported_source_name(source):
+    return "originals/" + source["redacted_name"]
+
+
+def redaction_notice(entry):
+    cover = entry.get("redaction")
+    if not cover:
+        return ""
+    return (
+        f'<p class="notice">Covered evidence: one continuous {cover["width_mm"]:g} × {cover["height_mm"]:g} mm cover '
+        f'sits at the same physical position on every picture in this packet, including each attached original. '
+        f'The cover is reported under <code>redaction</code> in <code>manifest.json</code> and in a '
+        f'<code>-cover.json</code> receipt beside every covered original.</p>'
+    )
+
+
 def specimen_html(store, entry, interactive=True):
     title = escape(entry["title"])
     name = escape(entry["tile_name"])
     date = escape(entry["created_at"])
     notes = escape(entry["notes"]).replace("\n", "<br>") or "No inspection notes."
     badge = "<p>Specimen uses synthetic training material.</p>" if entry["synthetic"] else ""
+    notice = redaction_notice(entry)
     measurements = []
     for record in entry["measurements"]:
         digest = record["pictures"][entry["view"]]
@@ -252,7 +382,8 @@ article{{border-top:1px solid #c9c5b8;padding:22px 0;break-inside:avoid}}
 img{{max-width:100%;max-height:520px;background:#242b2b}}
 table{{border-collapse:collapse;margin:1rem 0;width:100%}}
 td,th{{border-bottom:1px solid #ccc;text-align:left;padding:0.45rem 0;vertical-align:top}}
-</style></head><body><h1>{title}</h1><p>{name} · {date}</p>{badge}<p>{notes}</p>{body}
+.notice{{border-left:4px solid #b3743c;padding:8px 12px;background:#f3e7d6}}
+</style></head><body><h1>{title}</h1><p>{name} · {date}</p>{badge}<p>{notes}</p>{notice}{body}
 <footer>WeaveDesk · Capture-relative visual evidence</footer></body></html>""".encode("utf8")
 
 
@@ -265,7 +396,29 @@ def artifact_json(payload):
     return (json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False, sort_keys=True) + "\n").encode("utf8")
 
 
+def cover_receipt(cover, source):
+    return artifact_json({
+        "kind": "evidence-cover-receipt",
+        "covered_file": source["redacted_name"],
+        "covered_digest": source["digest"],
+        "original_digest": source["original_digest"],
+        "capture_role": source.get("capture_role"),
+        "photo_size": list(source.get("upright_size") or []),
+        "cover": {
+            "shape": cover["shape"],
+            "continuous": cover["continuous"],
+            "width_mm": cover["width_mm"],
+            "height_mm": cover["height_mm"],
+            "angle_deg": cover["angle_deg"],
+            "center": cover["center"],
+            "fill_rgb": cover["fill_rgb"],
+            "photo_quad": source["cover_quad"],
+        },
+    })
+
+
 def evidence_zip(store, entry):
+    cover = entry.get("redaction")
     stream = BytesIO()
     with ZipFile(stream, "w", compression=ZIP_DEFLATED, compresslevel=4) as zipfile:
         zipfile.writestr("inspection.html", specimen_html(store, entry, interactive=False))
@@ -280,11 +433,16 @@ def evidence_zip(store, entry):
                 if digest:
                     zipfile.writestr(exported_image_name(record, view), store.blobs.get(digest))
         for source in entry["originals"]:
+            if cover:
+                zipfile.writestr(exported_source_name(source), store.blobs.get(source["digest"]))
+                zipfile.writestr(source["cover_quad_name"], cover_receipt(cover, source))
+                continue
             suffix = PurePath(source["name"]).suffix.lower().strip(".")
             suffix = suffix if suffix in ("png", "jpg", "jpeg", "tif", "tiff", "webp") else "img"
             basename = filename_stem(PurePath(source["name"]).stem, "original")
-            file = store.blobs.require(source["digest"])
-            zipfile.write(file, f"originals/{basename}-{source['digest'][:10]}.{suffix}")
+            original = source.get("original_digest") or source["digest"]
+            file = store.blobs.require(original)
+            zipfile.write(file, f"originals/{basename}-{original[:10]}.{suffix}")
     return stream.getvalue()
 
 
@@ -318,4 +476,12 @@ def summarize_result(record):
 
 def summarize_evidence(record):
     keys = ("title", "notes", "id", "tags", "created_at", "tile_id", "tile_name", "tile_version_at_pin", "view")
-    return {**{key: record[key] for key in keys}, "count": len(record["measurements"]), "sheet_count": len(record["sheets"])}
+    summary = {**{key: record[key] for key in keys}, "count": len(record["measurements"]), "sheet_count": len(record["sheets"])}
+    cover = record.get("redaction")
+    if cover:
+        summary["redacted"] = True
+        summary["cover_mm"] = [cover["width_mm"], cover["height_mm"]]
+        summary["cover_center"] = cover["center"]
+    else:
+        summary["redacted"] = False
+    return summary

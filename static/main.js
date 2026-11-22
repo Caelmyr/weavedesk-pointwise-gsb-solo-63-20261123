@@ -161,7 +161,7 @@ function measurements() {
 
 function evidencePage() {
   return `<div class="grid-detail"><section class="card"><div class="title-row"><h3>Pinned evidence</h3>${btn("Pin evidence","pin","primary","archive")}</div>
-    ${state.packets.length?`<div class="divider-list">${state.packets.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.title)}</strong><small>${item.count} measurements · ${e(date(item.created_at))}</small></div>
+    ${state.packets.length?`<div class="divider-list">${state.packets.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.title)}</strong> ${item.redacted?badge("Covered","caution"):""}<br><small>${item.count} measurements · ${e(date(item.created_at))}${item.redacted?` · one ${n(item.cover_mm[0],0)} × ${n(item.cover_mm[1],0)} mm cover`:""}</small></div>
     ${link("View report",`/api/evidence/${item.id}/inspection.html`,"tiny secondary","book")}${link("ZIP",`/api/evidence/${item.id}/archive.zip`,"tiny secondary","download")}</div>`).join("")}</div>`:empty("Pin a packet from saved measurements to keep a dated copy of the observations.")}</section>
     <section class="card"><h3>Specimen activity</h3><div class="divider-list scroll-list">${(state.activity||[]).map(row=>`<div class="row"><div class="grow"><strong>${e(row.message)}</strong><br><small>${e(date(row.recorded_at))}</small></div></div>`).join("")}</div></section></div>`;
 }
@@ -197,15 +197,34 @@ function receivedPage() {
   let view=empty("Open an inspection ZIP to check its declared images and specimen details.",actions);
   if (chosen) {
     const path=`/api/received/${chosen.id}`;
-    view=`<section class="card stack"><div class="title-row"><h3>${e(chosen.title)}</h3>${badge("Digests match","ready")}</div>
+    const covered=Boolean(chosen.redaction);
+    const cover=chosen.redaction;
+    const originals=(chosen.originals||[]).map(item=>{
+      const url=path+`/original/${item.digest}`+(covered&&item.covered?"?cover=1":"");
+      const alt=`${covered&&item.covered?"Covered copy of the":"Original"} ${item.role} capture`;
+      const foot=covered&&item.covered
+        ? `Covered copy · ${e(item.name)} · sender's original digest ${e(item.original_digest.slice(0,10))} (file not included)`
+        : `Original · ${e(item.name)}`;
+      return `<figure class="stage">${img(url,alt)}<figcaption class="soft">${foot}</figcaption></figure>`;
+    }).join("");
+    const measurements=(chosen.measurements||[]).map(item=>{
+      const layers=["source","overlay",...(item.pictures.paired?"paired":"")];
+      const first=layers[0];
+      const url=path+`/measurement/${item.id}/${first}`+(covered?"?cover=1":"");
+      return `<figure class="stage">${img(url,`${covered?"Covered ":""}${item.label}`)}<figcaption class="soft">${covered?"Covered copy · ":""}${e(item.label)} · ${e(item.capture.name)}</figcaption></figure>`;
+    }).join("");
+    view=`<section class="card stack"><div class="title-row"><h3>${e(chosen.title)}</h3>${badge("Digests match","ready")}${covered?badge("Covered","caution"):""}</div>
       <p>${e(chosen.specimen)} · revision ${chosen.specimen_revision}</p>
       ${chosen.notes?`<p class="notice">${e(chosen.notes)}</p>`:""}
+      ${covered?`<p class="notice">One continuous ${n(cover.width_mm,0)} × ${n(cover.height_mm,0)} mm cover sits at the same physical position on every picture in this packet, including each attached original. The amber outline marks where it was applied; the pictures themselves show the cover opaque.</p>`:""}
       ${chosen.sheets.map((item,index)=>img(path+`/sheet/${index+1}`,`Received evidence sheet ${index+1}`)).join("")}
-      ${table(["Measurement","Source capture","Version"],chosen.measurements.map(item=>[item.label,item.capture.name,item.source_version]))}
-      <p class="soft">Archive matches its included digests. Preserve sender and capture records when sharing it.</p></section>`;
+      ${measurements}
+      ${originals?`<h4>Attached originals</h4>${originals}`:""}
+      ${table(["Measurement","Source capture","Version",covered?"Covered copy":""],chosen.measurements.map(item=>[item.label,item.capture.name,item.source_version,covered?"Yes":"—"]))}
+      <p class="soft">Archive matches its included digests. ${covered?"The covered copies are the only photographs this packet carries; the sender's uncovered originals are not included.":"Preserve sender and capture records when sharing it."}</p></section>`;
   }
   return `<header class="page-head"><div><h1>Received evidence</h1><p>Open a received WeaveDesk inspection packet and verify its declared images.</p></div>${actions}</header>
-    <div class="grid-detail">${view}<section class="card"><h3>Received packets</h3><div class="divider-list">${items.map(item=>`<div class="row"><div class="grow">${e(item.title)}<br><small>${e(date(item.imported_at))}</small></div>${btn("Open","received-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No received packets.</p>"}</div></section></div>`;
+    <div class="grid-detail">${view}<section class="card"><h3>Received packets</h3><div class="divider-list">${items.map(item=>`<div class="row"><div class="grow">${e(item.title)} ${item.redaction?badge("Covered","caution"):""}<br><small>${e(date(item.imported_at))}</small></div>${btn("Open","received-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No received packets.</p>"}</div></section></div>`;
 }
 
 function tilePage() {
@@ -578,11 +597,21 @@ function pinForm() {
     <div class="divider-list scroll-list">${rows}</div>${areaField("Notes","notes","",2400)}
     ${textField("Tags, comma separated","tags")}
     ${selectField("Use image layer","view",option("overlay","Measurement maps","overlay")+option("source","Registered source"))}
-    ${checkField("Include original uploads in ZIP","include_sources",false)}`,
+    ${checkField("Include original uploads in ZIP","include_sources",false)}
+    <fieldset class="form-columns"><legend>Single cover for every photograph</legend>
+      ${checkField("Apply one 18 × 22 mm cover","redact")}
+      ${numField("Cover centre X","redact_x",0.5,0,1,.001)}
+      ${numField("Cover centre Y","redact_y",0.5,0,1,.001)}
+      ${numField("Cover rotation (degrees)","redact_angle",0,-180,180,1)}
+      ${numField("Cover width (mm)","redact_width",18,18,18,1)}
+      ${numField("Cover height (mm)","redact_height",22,22,22,1)}
+    </fieldset>
+    <p class="soft">The cover is measured on the registered specimen plane, so one position lands on the same yarn in the front-on and oblique captures. It also requires the original uploads, so the recipient can compare covered copies with the declared originals.</p>`,
     "Pin evidence",async data=>{
       await api(tileUrl()+"/evidence",{method:"POST",body:{
         title:data.get("title"),result_ids:data.getAll("result_id"),notes:data.get("notes"),view:data.get("view"),
         tags:String(data.get("tags")).split(",").map(value=>value.trim()).filter(Boolean),include_sources:data.has("include_sources"),
+        ...(data.has("redact")?{redaction:{width_mm:Number(data.get("redact_width")),height_mm:Number(data.get("redact_height")),center:[Number(data.get("redact_x")),Number(data.get("redact_y"))],angle_deg:Number(data.get("redact_angle"))}}:{}),
       }});
       await gatherTile();
       state.tab="evidence";

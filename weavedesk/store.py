@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS metrology (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS metrology_tile ON metrology(tile_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS seams (
+    id TEXT PRIMARY KEY,
+    document TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -473,4 +478,27 @@ class Store:
             rows = conn.execute(
                 "SELECT document FROM metrology WHERE tile_id=? ORDER BY rowid DESC LIMIT 50", (chosen,),
             ).fetchall()
+            return [json.loads(row["document"]) for row in rows]
+
+    def save_seam(self, fields):
+        record = {**fields, "id": make_id(), "created_at": timestamp(), "version": 1}
+        with self.transaction(write=True) as conn:
+            conn.execute(
+                "INSERT INTO seams(id,document,created_at) VALUES(?,?,?)",
+                (record["id"], document(record), record["created_at"]),
+            )
+        return record
+
+    def _seam(self, conn, identifier):
+        seam_id = identity(identifier, "Seam ID")
+        row = conn.execute("SELECT document FROM seams WHERE id=?", (seam_id,)).fetchone()
+        return artifact_row(row, "Ribbon seam")
+
+    def seam(self, identifier):
+        with self.connect() as conn:
+            return self._seam(conn, identifier)
+
+    def list_seams(self):
+        with self.connect() as conn:
+            rows = conn.execute("SELECT document FROM seams ORDER BY rowid DESC LIMIT 60").fetchall()
             return [json.loads(row["document"]) for row in rows]

@@ -23,6 +23,7 @@ from .inspection import side_preview, viewing_pair
 from .art import base_rgba
 from .intake import MAX_ARCHIVE_BYTES, inspect_packet
 from .metrology import create_metrology
+from .seamservice import add_line_scan, create_seam, load_demo_seam, preview_notch
 from .model import (
     ANALYSIS_LABELS,
     MAX_UPLOAD,
@@ -427,6 +428,55 @@ def register_desks(api, store, heavy):
         return binary_response(artifact_json(record), "application/json", name + ".json")
 
 
+def register_seams(api, store, heavy):
+    @api.get("/seams")
+    def seam_list():
+        return jsonify({"items": store.list_seams()})
+
+    @api.post("/seams")
+    def seam_create():
+        with heavy:
+            record = create_seam(store, json_request())
+        return jsonify(record), 201
+
+    @api.get("/seams/<seam_id>")
+    def seam_show(seam_id):
+        return jsonify(store.seam(seam_id))
+
+    @api.get("/seams/<seam_id>/composite.png")
+    def seam_composite(seam_id):
+        return png_blob(store, store.seam(seam_id)["composite_digest"])
+
+    @api.post("/seams/<seam_id>/notch-preview")
+    def seam_notch(seam_id):
+        with heavy:
+            image, chosen = preview_notch(store, seam_id, json_request())
+        response = image_response(image)
+        response.headers["X-WeaveDesk-Notch"] = json.dumps(chosen, separators=(",", ":"))
+        return response
+
+    @api.post("/seams/<seam_id>/line-scan")
+    def seam_line_scan(seam_id):
+        with heavy:
+            record, scan = add_line_scan(store, seam_id, json_request())
+        return jsonify({"seam": record, "scan": scan}), 201
+
+    @api.get("/seams/<seam_id>/line-scan/<int:number>/data.json")
+    def seam_line_scan_file(seam_id, number):
+        record = store.seam(seam_id)
+        if not 1 <= number <= len(record["line_scans"]):
+            raise MissingError("Line scan not found.")
+        scan = record["line_scans"][number - 1]
+        name = filename_stem(record["title"], "ribbon-seam")
+        return binary_response(artifact_json(scan), "application/json", f"{name}-scan-{number}.json")
+
+    @api.post("/seams/demo")
+    def seam_demo():
+        with heavy:
+            record, _pair = load_demo_seam(store)
+        return jsonify(record), 201
+
+
 def register_training(api, store, heavy):
     @api.get("/training/hero.png")
     def synthetic_thumbnail():
@@ -452,6 +502,10 @@ def create_app(data_dir=None):
     @app.get("/")
     def landing():
         return send_from_directory(STATIC, "index.html")
+
+    @app.get("/seam.html")
+    def seam_studio():
+        return send_from_directory(STATIC, "seam.html")
 
     @app.get("/static/<path:name>")
     def assets(name):
@@ -507,5 +561,6 @@ def create_app(data_dir=None):
     register_measurements(api, store, heavy)
     register_artifacts(api, store, heavy)
     register_desks(api, store, heavy)
+    register_seams(api, store, heavy)
     app.register_blueprint(api)
     return app

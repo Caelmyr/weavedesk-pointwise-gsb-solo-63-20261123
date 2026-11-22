@@ -34,7 +34,8 @@ function toast(message, isError=false) {
 function chrome() {
   q("#rail").innerHTML=`<a href="#collection" class="brand"><span class="mark">${icon("logo")}</span><span><strong>WeaveDesk</strong><small>Textile inspection</small></span></a>
     <p class="nav-label">Studio</p><nav aria-label="Studio navigation">
-    ${nav.map(([key,label,glyph])=>`<a class="nav-link ${(state.page==="tile"?"collection":state.page)===key?"active":""}" href="#${key}">${icon(glyph)}${e(label)}</a>`).join("")}</nav>
+    ${nav.map(([key,label,glyph])=>`<a class="nav-link ${(state.page==="tile"?"collection":state.page)===key?"active":""}" href="#${key}">${icon(glyph)}${e(label)}</a>`).join("")}
+    <a class="nav-link" href="/seam.html">${icon("measure")}Ribbon seam</a></nav>
     <footer><span class="status-mark"></span>Local workspace</footer>`;
   const crumb=state.page==="tile"
     ? `<a href="#collection">Specimens</a><span aria-hidden="true">/</span><strong>${e(state.tile?.name || "Specimen")}</strong>`

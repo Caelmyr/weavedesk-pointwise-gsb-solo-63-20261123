@@ -161,3 +161,15 @@ dialog::backdrop{background:#172a24b5}
 @media(max-width:1230px){body{grid-template-columns:205px minmax(0,1fr)}.rail{padding-left:14px;padding-right:14px}.hero-text{padding:35px}}
 @media(max-width:950px){body{grid-template-columns:165px minmax(0,1fr)}.rail{padding-left:10px;padding-right:10px}.brand{margin-left:0}.brand .mark{width:33px;height:33px}.brand strong{font-size:21px}.collection{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-detail{grid-template-columns:1fr}.hero-text{padding:24px}}
 @media(max-width:700px){body{display:block}.rail{padding:8px 10px;height:auto;position:sticky;top:0;display:flex;flex-direction:row;align-items:center;gap:8px;overflow:auto}.rail .brand{margin:0 5px 0 0}.rail .brand strong,.rail .brand small,.rail .nav-label,.rail footer{display:none}.rail nav{display:flex;min-width:max-content;gap:3px}.nav-link{font-size:11px;gap:5px;padding:0 7px;min-height:36px}.nav-link .icon{width:14px}.mast{min-height:55px;padding:9px 12px}#main{padding:18px 12px 45px}.hero{grid-template-columns:1fr}.hero-image img{max-height:265px;min-height:200px}.section-head{align-items:start;flex-direction:column;gap:9px}.filter input{width:100%}.page-head{flex-direction:column}.hero .actions .button{font-size:12px;padding:6px 8px}.tile-meta{flex-wrap:wrap}.collection{gap:9px}.tile-card .tile-info{padding:8px}.tile-info h3{font-size:18px}}
+
+/* Ribbon seam studio */
+.seam-hero{grid-column:1/-1}
+.seam-specimen .seam-photo-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}
+.seam-photo-picker label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#5d6d60}
+.seam-photo-picker select,.seam-photo-picker input{width:100%}
+.seam-stage img{width:100%;height:auto;object-fit:contain;background:#202625;border-radius:6px}
+.chosen-row{background:#e7f1e6;font-weight:600}
+.ok{color:#2f6b43}.warn{color:#9a5f29}
+.scan-table{max-height:380px;overflow:auto}
+.blank-row{background:#f3e2dc;color:#8a4a3c}
+.blank-row td{font-style:italic}

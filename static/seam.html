@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1e302c">
+  <title>WeaveDesk · Ribbon seam</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/seam.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to seam studio</a>
+  <aside class="rail">
+    <a class="brand" href="/"><span class="mark">W</span><span><strong>WeaveDesk</strong><small>Textile inspection</small></span></a>
+    <p class="nav-label">Studio</p>
+    <nav aria-label="Seam navigation">
+      <a class="nav-link" href="/">Specimens</a>
+      <a class="nav-link active" href="/seam.html">Ribbon seam</a>
+    </nav>
+    <footer><span class="status-mark"></span>Local workspace</footer>
+  </aside>
+  <div class="workspace">
+    <header class="mast">
+      <div class="breadcrumb"><a href="/">Specimens</a><span aria-hidden="true">/</span><strong>Ribbon seam</strong></div>
+      <div class="actions"><button class="button light" id="load-demo" type="button">Load practice fragments</button></div>
+    </header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

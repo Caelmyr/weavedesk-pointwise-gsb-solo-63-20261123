@@ -14,13 +14,13 @@ export function metricSet(record) {
       const reviewed = Object.values(record.decisions);
       return [["Observed",m.total_observations],["Confirmed",reviewed.filter(item=>item.decision==="confirm").length],["Dismissed",reviewed.filter(item=>item.decision==="dismiss").length]];
     },
-    glare: () => [["Strong glare",percent(m.strong_glare_percent)],["Counted hotspots",m.hotspot_count],["Paired support",percent(m.support.overlap_percent)]],
+    glare: () => [["Color retained",percent(m.retained_percent)],["Light unreliable",percent(m.unreliable_percent)],["Glare hotspots",m.hotspot_count]],
     direction: () => [["Left-bright detail",percent(m.left_strong_percent)],["Right-bright detail",percent(m.right_strong_percent)],["Paired support",percent(m.support.overlap_percent)]],
     texture: () => [["Medium local roughness",n(m.grid_roughness["50"],5)],["Ridge axis",m.texture_orientation ? n(m.texture_orientation.ridge_angle_clockwise)+"°" : "—"],["Coherence",n(m.texture_orientation?.coherence,3)]],
     craze: () => [["Trace length",`${n(m.network_length)} ${m.length_unit}`],["Junctions",n(m.junctions,0)],["Closed cells",n(m.closed_cell_count,0)]],
     rim: () => [["Rim median ΔE",n(m.all_edges.median_from_center_delta_e)],["Rim pixels",n(m.all_edges.pixels,0)],["Interior L*",n(m.interior.median_lab[0])]],
     profile: () => [["Distance",`${n(m.line_length)} ${m.distance_unit}`],["Valid stations",`${m.supported_stations}/${m.requested_stations}`],["Median L*",n(m.features.median_lightness)]],
-    reference: () => [["Specimen to reference ΔE",n(m.delta_e76)],["Lightness difference",n(m.delta_lab[0])],["Dispersion difference",n(m.dispersion_delta)]],
+    reference: () => [["Specimen to reference ΔE",n(m.delta_e76)],["Both visible & reliable",percent(m.judged_percent)],["Noticeable change",percent(m.noticeable_change_percent)]],
     marking: () => [["Measured stations",percent(m.observed_percent)],["Rule among measured",percent(m.midrib_percent_of_observed)],["Runs",m.runs.length]],
     joint: () => [["Measured stations",m.measured_stations],["Unmeasured stations",m.unmeasured_stations],["Median absolute contrast",n(m.median_absolute_step,4)]],
     blade: () => [["Marked axis",`${n(m.axis_length)} ${m.length_unit}`],["Largest visible width",m.maximum_width==null?"—":`${n(m.maximum_width)} ${m.length_unit}`],["Supported sections",`${m.observed_stations}/${m.requested_stations}`]],
@@ -103,7 +103,8 @@ function profileDetail(m) {
 }
 
 function glareDetail(m) {
-  return `<h3>Glare hotspots</h3><p class="plot-note">${e(m.note)} Balancing gain ${n(m.gain,4)}.</p>
+  return `<h3>Glare hotspots</h3><p class="plot-note">${e(m.note)}</p>
+    <div class="metrics">${stat("Color retained",percent(m.retained_percent))}${stat("Light unreliable",percent(m.unreliable_percent))}${stat("Too little detail",percent(m.too_little_detail_percent))}${stat("Not visible",percent(m.not_visible_percent))}</div>
     ${table(["Hotspot","Pixels","Area mm²"],m.hotspots.map((item,index)=>[index+1,item.pixels,n(item.area_mm2,3)]))}`;
 }
 
@@ -123,9 +124,19 @@ function rimDetail(m) {
 }
 
 function referenceDetail(m) {
-  return `<h3>${e(m.reference_title)}</h3>
+  const parts = `<h3>${e(m.reference_title)}</h3>
     <div class="metrics">${stat("Specimen",m.specimen.swatch)}${stat("Approved reference",m.reference.swatch)}</div>
     <p class="notice">${e(m.capture_note)}</p>`;
+  if (m.judged_pixels == null) return parts;
+  return `${parts}
+    <h3>Two-session re-check</h3><p class="plot-note">${e(m.note)}</p>
+    <div class="metrics">${stat("Both visible & reliable",percent(m.judged_percent))}${stat("Noticeable change",percent(m.noticeable_change_percent))}${stat("Position median ΔE",n(m.position_delta_e_median,2))}</div>
+    ${table(["Withheld at this position","Share of selected area"],[
+      ["Old photo left blank",percent(m.old_left_blank_percent)],
+      ["Light unreliable",percent(m.light_unreliable_percent)],
+      ["Too little detail",percent(m.too_little_detail_percent)],
+      ["Outside approved sample",percent(m.outside_old_region_percent)],
+    ])}`;
 }
 
 function details(record) {

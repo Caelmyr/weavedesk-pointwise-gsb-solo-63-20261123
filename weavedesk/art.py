@@ -66,6 +66,33 @@ def signed_overlay(frame, values, valid, scale, *, source=None, unknown=None):
     return composite_color(frame, normalized, valid, SIGNED, source=source, unknown=unknown)
 
 
+POLARIZED_PALETTE = (
+    (0.36, 0.66, 0.56),
+    (0.94, 0.54, 0.36),
+    (0.56, 0.58, 0.55),
+    (0.21, 0.23, 0.23),
+)
+
+
+def polarized_overlay(frame, states, domain):
+    underlying = frame.display() * 0.46
+    layers = (
+        (states.retained & domain, POLARIZED_PALETTE[0]),
+        (states.unreliable & domain, POLARIZED_PALETTE[1]),
+        (states.too_little_detail & domain, POLARIZED_PALETTE[2]),
+        (domain & ~frame.valid, POLARIZED_PALETTE[3]),
+    )
+    for selector, color in layers:
+        underlying[selector] = 0.26 * underlying[selector] + 0.74 * np.asarray(color, dtype=np.float32)
+    missing = domain & states.not_visible & frame.valid
+    if np.any(missing):
+        yy, xx = np.ogrid[:underlying.shape[0], :underlying.shape[1]]
+        stripe = ((xx + yy) % 12 <= 3) & missing
+        underlying[missing] = POLARIZED_PALETTE[3]
+        underlying[stripe] = (0.42, 0.40, 0.37)
+    return uint8_image(underlying, frame.valid.astype(np.float32))
+
+
 def coverage_overlay(frame, states, requested):
     underlying = frame.display()
     displayed = underlying * 0.48

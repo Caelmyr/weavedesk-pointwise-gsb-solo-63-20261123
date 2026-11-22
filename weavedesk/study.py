@@ -15,7 +15,8 @@ STUDY_CHOICES = {
         "mixed": ("Mixed % of measured area", lambda result: result["metrics"]["percent"]["mixed"]),
     },
     "glare": {
-        "glare": ("Strong glare %", lambda result: result["metrics"]["strong_glare_percent"]),
+        "retained": ("Color retained %", lambda result: result["metrics"]["retained_percent"]),
+        "unreliable": ("Light-unreliable %", lambda result: result["metrics"]["unreliable_percent"]),
     },
     "texture": {
         "median_detail": ("Median roughness in image intensity", lambda result: result["metrics"]["grid_roughness"]["50"]),
@@ -38,9 +39,10 @@ def comparable_signature(result):
         schema["ambiguity"] = options["ambiguity"]
         schema["off_axis_limit"] = options["max_residual_fraction"]
     if mode == "glare":
-        schema["balance"] = options["balance"]
         schema["glare_fraction"] = options["glare_fraction"]
         schema["comparison_role"] = metrics["pair"]["comparison_role"]
+        line = metrics.get("line")
+        schema["glare_line"] = line["id"] if line else None
     if mode == "texture":
         schema["radius"] = options["background_radius"]
         schema["edge_scale"] = options["edge_smooth"]

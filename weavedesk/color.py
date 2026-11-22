@@ -206,8 +206,7 @@ def summarize_colors(linear, support, grid_count):
     }, distances
 
 
-def reference_fingerprint(linear, support):
-    lab = linear_lab(linear[support])
+def fingerprint_from_lab(lab):
     lightness = lab[:, 0]
     chroma = np.linalg.norm(lab[:, 1:], axis=1)
     center = np.median(lab, axis=0)
@@ -220,6 +219,10 @@ def reference_fingerprint(linear, support):
         "dispersion": round(float(np.quantile(distance, 0.9)), 5),
         "supported_pixels": len(lab),
     }
+
+
+def reference_fingerprint(linear, support):
+    return fingerprint_from_lab(linear_lab(linear[support]))
 
 
 def compare_reference(fingerprint, reference, this_basis, reference_basis):

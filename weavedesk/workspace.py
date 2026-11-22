@@ -148,6 +148,7 @@ def remove_photo(store, tile_id, capture_id, payload):
             tile["calibration"] = None
             tile["registrations"] = {}
             tile["regions"] = []
+            tile["glare_line"] = None
         tile["registrations"].pop(capture_id, None)
         tile["photos"].remove(photo)
 
@@ -197,6 +198,7 @@ def save_plane(store, tile_id, payload):
         tile["registrations"].clear()
         tile["regions"].clear()
         tile["calibration"] = None
+        tile["glare_line"] = None
 
     return store.edit_tile(tile_id, expected, change, "plane", "Saved the photographed tile plane")
 

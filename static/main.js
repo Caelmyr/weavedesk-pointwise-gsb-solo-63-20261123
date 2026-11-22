@@ -118,9 +118,18 @@ function regionPage() {
   const rows=tile.regions.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.name)}</strong><small>${e(state.config.region_purposes[item.purpose])}</small></div>
     ${btn("Edit","region-edit","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("");
   const gains=tile.calibration;
+  const line=tile.glare_line;
+  const exampleRegions=tile.regions.filter(item=>item.purpose!=="ignore");
+  const lineCard=`<section class="card"><h3>One polarized glare line</h3>
+    ${line?`<div class="metrics">${stat("Film glare examples",line.examples.filter(item=>item.kind==="glare").length)}${stat("Retained yarn examples",line.examples.filter(item=>item.kind==="color").length)}${stat("Color kept in examples",percent(line.counts.example_color_retained_percent))}${stat("Glare rejected in examples",percent(100-line.counts.example_glare_retained_percent))}</div>
+      <p class="soft">Adopted ${e(date(line.created_at))}. Every polarized run and reference re-check on this specimen reads this same line.</p>`:"<p class='soft'>Mark one confirmed film-glare patch and one confirmed bright-yarn patch, then adopt the specimen's single line. This one line is reused by all later polarised work.</p>"}
+    <div class="actions">${btn(line?"Replace glare line":"Adopt glare line","glare-line","secondary","sample")}${line?btn("Clear line","glare-line-clear","ghost"):""}</div>
+    ${exampleRegions.length<2?"<p class='soft'>Draw at least two sampling regions first.</p>":""}
+  </section>`;
   return `<div class="grid-detail"><section class="card"><div class="title-row"><h3>Sampling plane</h3>${current?btn("Draw region","region-add","primary","plus"):""}</div>
      ${current?`<figure class="stage">${img(current.registered_url+"&layer=regions",`Marked regions on ${tile.name}`)}</figure><p class="stage-foot">Region positions are saved in the registered survey plane.</p>`:empty("Set a base photograph from Captures.")}</section>
      <div class="stack"><section class="card"><h3>Saved regions</h3>${rows?`<div class="divider-list">${rows}</div>`:"<p class='soft'>Draw an inspection area, a coverage reference, or a patch to exclude.</p>"}</section>
+     ${lineCard}
      <section class="card"><h3>Neutral-card balance</h3>${gains?`<div class="metrics">${stat("Measured card",gains.before_swatch)}${stat("Balanced card",gains.after_swatch)}${stat("Unclipped card pixels",n(gains.card_samples,0))}</div>`:"<p class='soft'>Use an evenly lit neutral patch to balance this base capture.</p>"}
        <div class="actions">${btn("Balance neutral card","neutral","secondary","sample")}${gains?btn("Clear balance","neutral-clear","ghost"):""}</div>
      </section></div></div>`;
@@ -140,13 +149,15 @@ function optionInput(key,item) {
 
 function measureControls() {
   const tool=state.config.tools[state.tool];
+  const paired=tool.capture_pair || (state.tool==="reference"&&state.tile.glare_line?["parallel","cross"]:null);
   const all=state.tile.photos.filter(item=>item.registered_url);
-  const match=field=>sources(tool.capture_pair?all.filter(item=>item.role===tool.capture_pair[field]):all,null,tool.capture_pair?"Auto if unique":"Base capture");
+  const match=field=>sources(paired?all.filter(item=>item.role===paired[field]):all,null,paired?"Auto if unique":"Base capture");
   return `<form id="measurement-form" class="form-stack">
     ${selectField("Measurement","kind",Object.entries(state.config.tools).map(([name,item])=>option(name,item.label,state.tool)).join(""))}
     <p class="soft">${e(tool.description)}</p>
-    ${selectField(tool.capture_pair?"First photo":"Photo source","photo_id",match(0))}
-    ${tool.capture_pair?selectField("Paired photo","comparison_id",match(1)):checkField("Apply saved neutral balance","apply_neutral",true)}
+    ${selectField(paired?"First photo":"Photo source","photo_id",match(0))}
+    ${paired?selectField("Paired photo","comparison_id",match(1)):checkField("Apply saved neutral balance","apply_neutral",true)}
+    ${state.tool==="reference"&&!state.tile.glare_line?"<p class='soft'>This specimen has no adopted glare line, so Reference match compares the approved sample directly.</p>":""}
     ${selectField("Region","region_id",regions())}
     <div class="form-columns">${Object.entries(tool.fields).map(([key,item])=>optionInput(key,item)).join("")}</div>
     ${["profile","marking","joint","blade"].includes(state.tool)?btn("Mark line on image","mark-profile","secondary","measure"):""}
@@ -492,6 +503,35 @@ function refForm() {
     });
 }
 
+function glareLineForm() {
+  const line=state.tile.glare_line;
+  const regs=state.tile.regions.filter(item=>item.purpose!=="ignore");
+  if (regs.length<2) throw Error("Draw at least two sampling regions to mark the two confirmed examples.");
+  const parallel=state.tile.photos.filter(item=>item.role==="parallel"&&item.registered_url);
+  const cross=state.tile.photos.filter(item=>item.role==="cross"&&item.registered_url);
+  const examples=line?.examples||[];
+  const glareExample=examples.find(item=>item.kind==="glare");
+  const colorExample=examples.find(item=>item.kind==="color");
+  const regionChoices=regs.map(item=>option(item.id,item.name)).join("");
+  modal(line?"Replace the specimen's glare line":"Adopt the specimen's glare line",`
+    <p class="notice">One line per specimen. Mark the patch where the film glare is confirmed and the patch where the bright yarn color is confirmed. Every polarised run and reference re-check reuses this same line.</p>
+    <div class="form-columns">${selectField("Parallel-polarized photo","parallel_id",sources(parallel,null,"Choose a capture"))}
+    ${selectField("Cross-polarized photo","cross_id",sources(cross,null,"Choose a capture"))}</div>
+    <div class="form-columns">${selectField("Confirmed film glare","glare_region",regionChoices)}</div>
+    <div class="form-columns">${selectField("Confirmed bright yarn color","color_region",regionChoices)}</div>`,
+    line?"Replace line":"Adopt line",async data=>{
+      if (data.get("glare_region")===data.get("color_region")) throw Error("Choose two different example regions.");
+      await patchTile("/glare-line","PUT",{
+        parallel_id:data.get("parallel_id"),cross_id:data.get("cross_id"),
+        examples:[{kind:"glare",region_id:data.get("glare_region")},{kind:"color",region_id:data.get("color_region")}],
+      },"Glare line adopted.");
+    },false,line?btn("Clear line","glare-line-clear","danger"):"");
+  const glareSelect=q("#field-glare_region",dialog);
+  const colorSelect=q("#field-color_region",dialog);
+  if (glareSelect&&glareExample) glareSelect.value=glareExample.region_id;
+  if (colorSelect&&colorExample) colorSelect.value=colorExample.region_id;
+}
+
 function pairForm() {
   const ready=state.tile.photos.filter(item=>item.registered_url);
   if (ready.length<2) throw Error("Register at least two captures first.");
@@ -699,6 +739,10 @@ async function doAction(name,target) {
     "draw-undo":()=>{drawPoints.pop();drawUpdate();},
     neutral:neutralForm,
     "neutral-clear":()=>patchTile("/calibration","DELETE",{},"Neutral-card balance cleared."),
+    "glare-line":glareLineForm,
+    "glare-line-clear":()=>modal("Clear the specimen's glare line?",'<p>Saved measurements keep the line they used. Polarized glare and Reference match will need a new line.</p>',"Clear line",async ()=>{
+      await patchTile("/glare-line","DELETE",{},"Glare line cleared.");
+    }),
     "reference-add":refForm,
     "reference-retire":()=>{
       const ref=state.refs.find(item=>item.id===id);

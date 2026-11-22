@@ -89,6 +89,11 @@ def result_metrics_table(record):
     elif kind == "glare":
         columns = ("pixels", "area_mm2", "bounds")
         rows = ([item[key] for key in columns] for item in metrics["hotspots"])
+    elif kind == "reference" and metrics.get("judged_pixels") is not None:
+        columns = ("judged_pixels", "judged_percent", "light_unreliable_percent", "old_left_blank_percent",
+                   "too_little_detail_percent", "outside_old_region_percent", "noticeable_change_percent",
+                   "position_delta_e_median", "noticeable_change_delta_e")
+        rows = [[metrics.get(key) for key in columns]]
     elif kind == "marking":
         fields = ("condition", "first_station", "last_station", "stations", "midpoint_normalized", "median_cross_width")
         columns = ("unit", *fields)
@@ -295,12 +300,12 @@ def summarize_result(record):
         "weave": ("axis_a_pitch", "axis_b_pitch", "crossing_angle"),
         "coverage": ("percent", "measured"),
         "defects": ("total_observations", "reported_observations"),
-        "glare": ("strong_glare_percent", "hotspot_count"),
+        "glare": ("retained_percent", "unreliable_percent", "hotspot_count"),
         "texture": ("texture_orientation", "detail_noise"),
         "craze": ("network_length", "length_unit", "closed_cell_count"),
         "rim": ("all_edges", "rim_band_pixels"),
         "profile": ("line_length", "distance_unit", "supported_stations"),
-        "reference": ("reference_title", "delta_e76"),
+        "reference": ("reference_title", "delta_e76", "judged_pixels", "noticeable_change_percent"),
         "direction": ("left_strong_percent", "right_strong_percent"),
         "marking": ("observed_percent", "midrib_percent_of_observed", "stations"),
         "joint": ("measured_stations", "unmeasured_stations", "median_absolute_step"),

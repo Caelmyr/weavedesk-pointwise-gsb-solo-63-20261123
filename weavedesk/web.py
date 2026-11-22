@@ -6,7 +6,7 @@ from threading import BoundedSemaphore
 from flask import Blueprint, Flask, Response, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
-from .analysis import approve_reference, evaluate
+from .analysis import adopt_glare_line, approve_reference, clear_glare_line, evaluate
 from .demo import load_training, preview_photo
 from .evidence import (
     artifact_json,
@@ -232,6 +232,18 @@ def register_specimens(api, store, heavy):
     @api.delete("/specimens/<specimen_id>/calibration")
     def calibration_remove(specimen_id):
         return jsonify(present_tile(clear_calibration(store, specimen_id, json_request())))
+
+    @api.put("/specimens/<specimen_id>/glare-line")
+    def glare_line_save(specimen_id):
+        with heavy:
+            entry = adopt_glare_line(store, specimen_id, json_request())
+        return jsonify(present_tile(entry))
+
+    @api.delete("/specimens/<specimen_id>/glare-line")
+    def glare_line_remove(specimen_id):
+        with heavy:
+            entry = clear_glare_line(store, specimen_id, json_request())
+        return jsonify(present_tile(entry))
 
 
 def register_measurements(api, store, heavy):

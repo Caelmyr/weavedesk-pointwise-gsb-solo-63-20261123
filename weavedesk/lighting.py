@@ -1,5 +1,4 @@
 import numpy as np
-from scipy import ndimage
 
 from .color import float_list, quantile_rows
 from .defects import gaussian_supported, robust_noise
@@ -62,77 +61,6 @@ def robust_exposure_ratio(primary, secondary, candidate):
 
 def fixed_gain(value):
     return value, {"estimated": False, "ratio": value}
-
-
-def glare_scale(parallel, cross, estimated_area, strategy, commanded_gain):
-    if strategy == "fixed":
-        return fixed_gain(commanded_gain)
-    eligible = estimated_area & (parallel >= 0.028) & (cross >= 0.028) & (parallel < 0.94) & (cross < 0.94)
-    ratio = parallel[eligible] / cross[eligible]
-    if len(ratio) < 100:
-        raise InputError("No stable middle-intensity tie area is available to balance the two photos.")
-    lo, mid, hi = np.quantile(ratio, (0.20, 0.50, 0.82))
-    gain = float(lo)
-    if not 0.2 <= gain <= 5:
-        raise InputError("Polarized captures require a more consistent exposure.")
-    return gain, {
-        "estimated": True,
-        "candidates": len(ratio),
-        "reason": "Lower-ratio samples reduce the influence of bright specular pixels.",
-        "ratio_quantiles_20_50_82": float_list([lo, mid, hi], 5),
-    }
-
-
-def hotspot_summaries(hot, frame, minimum):
-    labels, _ = ndimage.label(hot)
-    result = []
-    width, height = frame.extent
-    for index, region in enumerate(ndimage.find_objects(labels), start=1):
-        if region is None:
-            continue
-        rows, cols = region
-        count = int(np.count_nonzero(labels[region] == index))
-        if count < minimum:
-            continue
-        result.append({
-            "pixels": count,
-            "bounds": [cols.start / width, rows.start / height, cols.stop / width, rows.stop / height],
-            "area_mm2": round(count * frame.scale[0] * frame.scale[1], 3) if frame.scale else None,
-        })
-    result.sort(key=lambda item: -item["pixels"])
-    return result[:24], len(result)
-
-
-def measure_glare(parallel, cross, area, calibration_area, parameters):
-    pairing = registration_pair(parallel, cross)
-    if parallel.photo["role"] != "parallel" or cross.photo["role"] != "cross":
-        raise InputError("Polarized glare needs one parallel-polarized and one cross-polarized capture.")
-    common, measure, overlap = captured_pair(parallel, cross, area)
-    direct = luminance(parallel.linear)
-    subdued = luminance(cross.linear)
-    ties = calibration_area & parallel.valid & cross.valid & ~parallel.clipped & ~cross.clipped
-    factor, method = glare_scale(direct, subdued, ties, parameters["balance"], parameters["fixed_gain"])
-    fitted = subdued * factor
-    remaining = np.maximum(direct - fitted, 0)
-    percent = remaining / np.maximum(direct, 0.025)
-    hot = measure & (percent >= parameters["glare_fraction"])
-    entries, count = hotspot_summaries(hot, parallel, parameters["minimum_hotspot"])
-    density = int(np.count_nonzero(hot)) / overlap["unclipped_pixels"]
-    dark = measure & (direct < fitted)
-    result = {
-        "pair": pairing,
-        "support": overlap,
-        "balance": method,
-        "gain": round(factor, 5),
-        "signed_signal_below_zero_percent": round(100 * np.count_nonzero(dark) / overlap["unclipped_pixels"], 2),
-        "strong_glare_percent": round(100 * density, 3),
-        "glare_quantiles": quantile_rows(percent[measure]),
-        "residual_light_quantiles": quantile_rows(remaining[measure]),
-        "hotspots": entries,
-        "hotspot_count": count,
-        "note": "Relative glare under this recorded capture pair, in linear image intensity.",
-    }
-    return result, percent, measure, common & ~measure
 
 
 def directional_grid(signal, support, active, cells=5):

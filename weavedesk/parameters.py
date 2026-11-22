@@ -51,14 +51,11 @@ TOOLS = {
     },
     "glare": {
         "label": "Polarized glare",
-        "description": "Inspect the local intensity gained in parallel polarization on common visible pixels.",
+        "description": "Read the specimen's one adopted glare line and keep only the yarn color it finds reliable.",
         "capture_pair": ["parallel", "cross"],
         "fields": {
-            "balance": {"kind": "choice", "label": "Exposure balance", "default": "auto", "choices": ["auto", "fixed"]},
-            "fixed_gain": {"kind": "number", "label": "Fixed gain", "default": 1, "min": 0.2, "max": 5, "step": 0.05},
             "glare_fraction": {"kind": "number", "label": "Hotspot fraction", "default": 0.2, "min": 0.04, "max": 0.9, "step": 0.02},
             "minimum_hotspot": {"kind": "integer", "label": "Minimum hotspot px", "default": 30, "min": 3, "max": 5000},
-            "balance_region": {"kind": "region", "label": "Exposure tie area", "default": None},
         },
     },
     "direction": {
@@ -128,9 +125,10 @@ TOOLS = {
     },
     "reference": {
         "label": "Reference match",
-        "description": "Compare this specimen with one frozen approved visual sample.",
+        "description": "Compare this specimen with one frozen approved visual sample, only where both are reliably visible.",
         "fields": {
             "reference_id": {"kind": "reference", "label": "Approved visual reference", "default": None},
+            "delta_e_floor": {"kind": "number", "label": "Noticeable change ΔE76", "default": 3, "min": 0.5, "max": 30, "step": 0.5},
         },
     },
 }

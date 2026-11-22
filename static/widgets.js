@@ -18,6 +18,7 @@ const icons = {
   clock: "<circle cx='12' cy='12' r='8'/><path d='M12 8v5l3 2'/>",
   edit: "<path d='m5 16 11-11 3 3L8 19H5v-3zm9-9 3 3'/>",
   compare: "<rect x='3' y='5' width='18' height='14' rx='2'/><path d='M12 5v14m-4-7h1m6 0h1'/>",
+  clamp: "<path d='M5 3v18M19 3v18'/><rect x='3.5' y='7' width='17' height='3.4' rx='1'/><rect x='3.5' y='13.6' width='17' height='3.4' rx='1'/>",
 };
 
 export const q = (selector, root = document) => root.querySelector(selector);

@@ -23,6 +23,7 @@ from .inspection import side_preview, viewing_pair
 from .art import base_rgba
 from .intake import MAX_ARCHIVE_BYTES, inspect_packet
 from .metrology import create_metrology
+from .mount import plan_mount, review_mount, summarize_mount
 from .model import (
     ANALYSIS_LABELS,
     MAX_UPLOAD,
@@ -427,6 +428,38 @@ def register_desks(api, store, heavy):
         return binary_response(artifact_json(record), "application/json", name + ".json")
 
 
+def register_mounts(api, store, heavy):
+    @api.get("/specimens/<specimen_id>/mounts")
+    def mount_list(specimen_id):
+        return jsonify({"items": [summarize_mount(item) for item in store.list_mounts(specimen_id)]})
+
+    @api.post("/specimens/<specimen_id>/mounts/plan")
+    def mount_plan(specimen_id):
+        with heavy:
+            record = plan_mount(store, specimen_id, json_request())
+        return jsonify(record), 201
+
+    @api.post("/specimens/<specimen_id>/mounts/review")
+    def mount_review(specimen_id):
+        with heavy:
+            record = review_mount(store, specimen_id, json_request())
+        return jsonify(record), 201
+
+    @api.get("/mounts/<mount_id>")
+    def mount_show(mount_id):
+        return jsonify(store.mount(mount_id))
+
+    @api.get("/mounts/<mount_id>/overlay.png")
+    def mount_overlay(mount_id):
+        return png_blob(store, store.mount(mount_id)["overlay"])
+
+    @api.get("/mounts/<mount_id>/data.json")
+    def mount_document(mount_id):
+        record = store.mount(mount_id)
+        name = filename_stem(record["title"], "mounting")
+        return binary_response(artifact_json(record), "application/json", name + ".json")
+
+
 def register_training(api, store, heavy):
     @api.get("/training/hero.png")
     def synthetic_thumbnail():
@@ -507,5 +540,6 @@ def create_app(data_dir=None):
     register_measurements(api, store, heavy)
     register_artifacts(api, store, heavy)
     register_desks(api, store, heavy)
+    register_mounts(api, store, heavy)
     app.register_blueprint(api)
     return app

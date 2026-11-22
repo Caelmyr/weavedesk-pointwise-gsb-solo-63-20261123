@@ -123,7 +123,10 @@ def profile_overlay(frame, endpoints, band_pixels, source=None):
 def annotated_regions(frame, regions, source=None):
     image = base_rgba(frame, source)
     draw = ImageDraw.Draw(image)
-    colors = {"ignore": (236, 121, 125), "bare": (238, 184, 120), "glazed": (120, 231, 185), "neutral": (228, 230, 211)}
+    colors = {
+        "ignore": (236, 121, 125), "bare": (238, 184, 120), "glazed": (120, 231, 185), "neutral": (228, 230, 211),
+        "fragile": (244, 172, 99), "display": (150, 220, 190), "loss": (210, 96, 108),
+    }
     width = max(1, round(min(image.size) / 360))
     for region in regions:
         color = colors.get(region["purpose"], (244, 169, 138))

@@ -65,6 +65,14 @@ CREATE TABLE IF NOT EXISTS metrology (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS metrology_tile ON metrology(tile_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS mounts (
+    id TEXT PRIMARY KEY,
+    tile_id TEXT NOT NULL REFERENCES specimens(id),
+    kind TEXT NOT NULL,
+    document TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mounts_tile ON mounts(tile_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -472,5 +480,30 @@ class Store:
             self._tile(conn, chosen)
             rows = conn.execute(
                 "SELECT document FROM metrology WHERE tile_id=? ORDER BY rowid DESC LIMIT 50", (chosen,),
+            ).fetchall()
+            return [json.loads(row["document"]) for row in rows]
+
+    def save_mount(self, fields):
+        record = {**fields, "id": make_id(), "created_at": timestamp()}
+        with self.transaction(write=True) as conn:
+            conn.execute(
+                "INSERT INTO mounts(id,tile_id,kind,document,created_at) VALUES (?,?,?,?,?)",
+                (record["id"], record["tile_id"], record["kind"], document(record), record["created_at"]),
+            )
+            event(conn, record["tile_id"], "mount", record["event_message"])
+        return record
+
+    def mount(self, identifier):
+        chosen = identity(identifier, "Mounting record ID")
+        with self.connect() as conn:
+            row = conn.execute("SELECT document FROM mounts WHERE id=?", (chosen,)).fetchone()
+            return artifact_row(row, "Mounting record")
+
+    def list_mounts(self, tile_id):
+        chosen = identity(tile_id, "Specimen ID")
+        with self.connect() as conn:
+            self._tile(conn, chosen)
+            rows = conn.execute(
+                "SELECT document FROM mounts WHERE tile_id=? ORDER BY rowid DESC LIMIT 60", (chosen,),
             ).fetchall()
             return [json.loads(row["document"]) for row in rows]

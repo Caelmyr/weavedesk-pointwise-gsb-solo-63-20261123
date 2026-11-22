@@ -1,7 +1,7 @@
 import {q,qa,icon,e,btn,link,badge,empty,option,img,field,textField,selectField,numField,checkField,areaField,api,request,date,n,percent,plot,stat,table} from "./widgets.js";
 import {resultCard,specimenResultRows} from "./results.js";
 
-const state={page:"collection",tile:null,tiles:[],tab:"captures",tool:"color",capture:null,viewer:"raw",layer:"overlay",result:null,config:null,results:[],refs:[],packets:[],study:null,studies:[],query:""};
+const state={page:"collection",tile:null,tiles:[],tab:"captures",tool:"color",capture:null,viewer:"raw",layer:"overlay",result:null,config:null,results:[],refs:[],packets:[],study:null,studies:[],query:"",mounts:[],mountActive:null};
 const dialog=q("#dialog");
 const nav=[
   ["collection","Specimens","tiles"],
@@ -10,7 +10,7 @@ const nav=[
   ["received","Received evidence","archive"],
 ];
 const tabs=[
-  ["captures","Captures","camera"],["regions","Sampling regions","frame"],["measure","Measure","measure"],["geometry","Geometry","frame"],["evidence","Evidence","archive"],
+  ["captures","Captures","camera"],["regions","Sampling regions","frame"],["measure","Measure","measure"],["geometry","Geometry","frame"],["mount","Mounting","clamp"],["evidence","Evidence","archive"],
 ];
 const tileUrl=()=>`/api/specimens/${state.tile.id}`;
 const tileData=extra=>({version:state.tile.version,...extra});
@@ -190,6 +190,84 @@ function geometryPage() {
       <section class="card"><h3>Saved geometry</h3><div class="divider-list">${results.map(item=>`<div class="row"><div class="grow">${e(item.title)}<br><small>${e(item.mode)} · revision ${item.specimen.version}</small></div>${btn("Open","metrology-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No saved outlines.</p>"}</div></section></div></div>`;
 }
 
+function planCard(record) {
+  const base=`/api/mounts/${record.id}`;
+  const adopted=record.adopted;
+  const stops=record.stops.map(stop=>[
+    `Stop ${stop.index}${stop.index===record.adopted_stop?" · adopted":""}${stop.index===record.recommended_stop&&stop.index!==record.adopted_stop?" · recommended":""}`,
+    stop.installable?"Installable":stop.reasons.join(" "),
+    percent(stop.secure_coverage_percent),
+    percent(stop.label_exposed_percent),
+  ]);
+  const adoptable=record.stops.filter(stop=>stop.installable&&stop.index!==record.adopted_stop);
+  const uncovered=adopted.uncovered_secure;
+  return `<section class="card stack"><div class="title-row"><div><h3>${e(record.title)}</h3><small>${e(date(record.created_at))} · specimen revision ${record.specimen.version}</small></div>${badge(`Detent ${record.adopted_stop} adopted`,"ready")}</div>
+    <figure class="stage">${img(base+"/overlay.png",`Adopted clamp frame landing positions for ${record.title}`)}</figure>
+    <div class="metrics">
+      ${stat("Risk-area fabric held",percent(adopted.secure_coverage_percent))}
+      ${stat("Label left visible",percent(adopted.label_exposed_percent))}
+      ${stat("Bar contact width",`${n(record.parameters.bar_width_mm,1)} mm`)}
+      ${stat("Bar spacing",`${n(record.parameters.bar_gap_mm,1)} mm`)}
+    </div>
+    <h3>Where the two bars land</h3>
+    ${table(["Bar","Presses (mm from top)","On surviving fabric","Contact","Of risk area","Covers label","Over losses"],
+      adopted.bars.map(bar=>[`Bar ${bar.index}`,`${n(bar.y_mm[0],1)}–${n(bar.y_mm[1],1)}`,`${n(bar.contact_mm2,1)} mm²`,percent(bar.contact_fraction*100),`${n(bar.pressed_secure_mm2,1)} mm²`,`${n(bar.label_covered_mm2,1)} mm²`,`${n(bar.loss_mm2,1)} mm²`]))}
+    <h3>Not held by this detent</h3>
+    ${uncovered.length?table(["Risk-area stretch (mm from top)","Surviving fabric"],uncovered.map(item=>[`${n(item.y_mm[0],1)}–${n(item.y_mm[1],1)}`,`${n(item.area_mm2,1)} mm²`])):"<p class='soft'>The adopted bars hold every surviving stretch of the risk area.</p>"}
+    <h3>All detents</h3>
+    ${table(["Detent","Status","Risk area held","Label visible"],stops)}
+    ${adoptable.length?`<div class="actions">${adoptable.map(stop=>btn(`Adopt stop ${stop.index}`,"mount-adopt","tiny secondary",null,`data-stop="${stop.index}"`)).join("")}</div>`:""}
+    <div class="actions">${link("Plan JSON",base+"/data.json","secondary","download")}</div>
+  </section>`;
+}
+
+function reviewCard(record) {
+  const base=`/api/mounts/${record.id}`;
+  const counts=record.counts;
+  const pending=record.pending_recapture.map(item=>{
+    if (item.entry==="zone") return [`Bar ${item.bar} · ${n(item.y_mm[0],1)}–${n(item.y_mm[1],1)} mm`,"Band stretch",`Unclear in the ${item.unclear_in.join(" and ")} capture`];
+    if (item.entry==="baseline_observation") return [item.key,`Earlier observation · bar ${item.bar}`,"Not visible in the repeat capture"];
+    return [item.key,`Repeat observation · bar ${item.bar}`,`Unclear in the ${item.unclear_in.join(" and ")} capture`];
+  });
+  return `<section class="card stack"><div class="title-row"><div><h3>${e(record.title)}</h3><small>${e(date(record.created_at))} · plan “${e(record.plan_adopted.plan_title)}” · detent ${record.plan_adopted.adopted_stop}</small></div>${badge("Removal review","ready")}</div>
+    <figure class="stage">${img(base+"/overlay.png",`Repeat capture with adopted bars and review marks for ${record.title}`)}</figure>
+    <div class="metrics">
+      ${stat("Confirmable changes",counts.confirmable)}
+      ${stat("Pre-existing, not new",counts.pre_existing)}
+      ${stat("Pending re-photography",counts.pending_recapture)}
+      ${stat("Outside the bars",counts.outside_bars)}
+    </div>
+    <h3>Confirmable changes at the pressed positions</h3>
+    ${record.confirmable.length?table(["Key","Bar","Type","Area"],record.confirmable.map(item=>[item.key,`Bar ${item.bar}`,item.type,item.area_mm2==null?"—":`${n(item.area_mm2,2)} mm²`])):"<p class='soft'>No new marks qualify at the pressed positions.</p>"}
+    <h3>Pre-existing marks under the bars (not new)</h3>
+    ${record.pre_existing.length?table(["Repeat","Earlier","Bar","Clear in both sessions"],record.pre_existing.map(item=>[item.repeat_key,item.baseline_key,`Bar ${item.bar}`,item.clear_in_both?"yes":"no"])):"<p class='soft'>No earlier marks sit under the adopted bars.</p>"}
+    <h3>Pending re-photography</h3>
+    ${pending.length?table(["Where","What","Why"],pending):"<p class='soft'>Both sessions show the pressed bands clearly.</p>"}
+    <details><summary>Earlier observations under the bars</summary>${table(["Key","Bar","Seen in repeat"],record.baseline_under_bars.map(item=>[item.key,`Bar ${item.bar}`,item.seen_in_repeat?"yes":"no"]))}</details>
+    <div class="actions">
+      ${btn("Open adopted plan","mount-open","secondary","clamp",`data-id="${record.plan_id}"`)}
+      ${counts.confirmable?btn(`Confirm ${counts.confirmable} change(s) in repeat observations`,"mount-confirm","primary","check"):""}
+      ${btn("Open repeat measurement","result-open","secondary","measure",`data-id="${record.repeat.result_id}"`)}
+      ${link("Review JSON",base+"/data.json","secondary","download")}
+    </div>
+  </section>`;
+}
+
+function mountPage() {
+  const record=state.mountActive;
+  const items=state.mounts||[];
+  const view=record?record.kind==="plan"?planCard(record):reviewCard(record):empty("Plan the clamp frame detent, then review the bars' landing positions after removal.");
+  const rows=items.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.title)}</strong><small>${item.kind==="plan"
+    ?`Plan · detent ${item.adopted_stop} of ${item.stop_count} · risk area ${percent(item.secure_coverage_percent)} held`
+    :`Review · ${item.counts.confirmable} confirmable · ${item.counts.pending_recapture} to re-photograph`}</small></div>
+    ${btn("Open","mount-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("");
+  return `<div class="grid-detail">${view}<div class="stack">
+    <section class="card"><h3>Clamp frame</h3><p class="soft">Two linked bars slide together between detents. Evaluate the detents against the circled risk area and the label that must stay visible, adopt a detent that truly installs, then compare post-removal spot observations at the pressed positions.</p>
+      <div class="actions">${btn("Plan clamp frame","mount-plan","primary","clamp")}${btn("Review after removal","mount-review","secondary","compare")}</div></section>
+    <section class="card"><h3>Saved mounting records</h3>${rows?`<div class="divider-list">${rows}</div>`:"<p class='soft'>No mounting records yet.</p>"}</section>
+  </div></div>`;
+}
+
 function receivedPage() {
   const items=state.received||[];
   const chosen=state.receivedActive;
@@ -215,7 +293,7 @@ function tilePage() {
   <p>${e(descriptors.join(" · ") || "Registered textile sample")}</p></div><div class="actions">${btn("Edit specimen","tile-edit","secondary","edit")}
   ${btn("Approve reference","reference-add","secondary","book")}</div></header>
   <nav class="tabs" aria-label="Specimen tools">${tabs.map(([key,label,glyph])=>`<button type="button" class="tab ${state.tab===key?"active":""}" data-do="tile-tab" data-value="${key}">${icon(glyph)}${e(label)}</button>`).join("")}</nav>
-  ${{captures,regions:regionPage,measure:measurements,geometry:geometryPage,evidence:evidencePage}[state.tab]()}`;
+  ${{captures,regions:regionPage,measure:measurements,geometry:geometryPage,mount:mountPage,evidence:evidencePage}[state.tab]()}`;
 }
 
 function libraryPage() {
@@ -250,14 +328,15 @@ function render() {
 
 async function gatherTile(token=travel) {
   const url=tileUrl();
-  const [results,packets,activity,refs,metrology]=await Promise.all([
-    api(url+"/results"),api(url+"/evidence"),api(url+"/activity"),api("/api/library"),api(url+"/metrology"),
+  const [results,packets,activity,refs,metrology,mounts]=await Promise.all([
+    api(url+"/results"),api(url+"/evidence"),api(url+"/activity"),api("/api/library"),api(url+"/metrology"),api(url+"/mounts"),
   ]);
   if (token!==travel) return;
   state.results=results.items;
   state.packets=packets.items;
   state.activity=activity.items;
   state.metrology=metrology.items;
+  state.mounts=mounts.items;
   state.refs=refs.items;
 }
 
@@ -270,7 +349,7 @@ async function route() {
     const tile=await api(`/api/specimens/${id}`);
     if (token!==travel) return;
     if (state.tile?.id!==tile.id || state.page!=="tile") {
-      state.tab="captures"; state.capture=null; state.result=null;state.layer="overlay";state.viewer="raw";state.metrologyActive=null;
+      state.tab="captures"; state.capture=null; state.result=null;state.layer="overlay";state.viewer="raw";state.metrologyActive=null;state.mountActive=null;
     }
     state.tile=tile;
     await gatherTile(token);
@@ -535,6 +614,70 @@ function geometryMeasurementForm(mode) {
   if (!area) prepareDrawing([],45);
 }
 
+function mountPlanForm() {
+  const tile=state.tile;
+  if (!tile.plane) throw Error("Set a base photograph and mark the specimen plane first.");
+  if (!(tile.width_mm&&tile.height_mm)) throw Error("Enter the specimen's physical dimensions (Edit specimen) before planning a clamp frame.");
+  const fragile=tile.regions.filter(item=>item.purpose==="fragile");
+  const display=tile.regions.filter(item=>item.purpose==="display");
+  if (!fragile.length) throw Error("Draw a region with the purpose “Thread-loss risk area” over the edge that keeps shedding first.");
+  if (!display.length) throw Error("Draw a region with the purpose “Keep visible for viewers” over the woven label first.");
+  const losses=tile.regions.filter(item=>item.purpose==="loss").length;
+  const height=tile.height_mm;
+  const stops=[0.08,0.18,0.28].map(factor=>Math.round(height*factor*2)/2);
+  modal("Plan the clamp frame",`
+    ${textField("Plan title","title","Clamp frame plan",'required maxlength="90"')}
+    <div class="form-columns">${selectField("Thread-loss risk area","secure_region_id",fragile.map(item=>option(item.id,item.name)).join(""))}
+    ${selectField("Label to keep visible","display_region_id",display.map(item=>option(item.id,item.name)).join(""))}
+    ${numField("Bar contact width (mm)","bar_width_mm",Math.max(2,Math.round(height*0.06*2)/2),0.5,200,0.5)}
+    ${numField("Bar spacing, center to center (mm)","bar_gap_mm",Math.round(height*0.4*2)/2,1,400,0.5)}
+    ${stops.map((value,index)=>numField(`Stop ${index+1} · upper bar center (mm from top)`,`stop_${index}`,value,0,height,0.5)).join("")}
+    ${numField("Minimum fabric contact per bar","min_contact_fraction",0.5,0.05,1,0.05)}</div>
+    ${selectField("Detent to adopt","stop",option("","Best installable detent (recommended)","")+stops.map((_,index)=>option(index+1,`Stop ${index+1}`)).join(""))}
+    <p class="notice">The bars are linked and span the full plane width; only the detents move them. Regions marked “Missing fabric (loss)” (${losses} drawn) or “Exclude from measurement” never count as pressed.</p>`,
+    "Evaluate detents",async data=>{
+      const record=await api(tileUrl()+"/mounts/plan",{method:"POST",body:{
+        title:data.get("title"),secure_region_id:data.get("secure_region_id"),display_region_id:data.get("display_region_id"),
+        bar_width_mm:Number(data.get("bar_width_mm")),bar_gap_mm:Number(data.get("bar_gap_mm")),
+        stops_mm:stops.map((_,index)=>Number(data.get("stop_"+index))),
+        min_contact_fraction:Number(data.get("min_contact_fraction")),
+        ...(data.get("stop")?{stop:Number(data.get("stop"))}:{}),
+      }});
+      state.mountActive=record;
+      await gatherTile();
+      commitModal();
+      toast(`Clamp frame plan saved · adopted detent ${record.adopted_stop}.`);
+      render();
+    });
+}
+
+function mountReviewForm() {
+  const plans=(state.mounts||[]).filter(item=>item.kind==="plan");
+  if (!plans.length) throw Error("Save a clamp frame plan before reviewing a removal.");
+  const runs=state.results.filter(item=>item.kind==="defects");
+  if (runs.length<2) throw Error("Save spot observations for the earlier capture and the post-removal capture first.");
+  const runLabel=item=>`${date(item.created_at)} · revision ${item.source_version} · ${item.brief.reported_observations} spots`;
+  modal("Review clamp frame removal",`
+    ${textField("Review title","title","Clamp frame removal review",'required maxlength="90"')}
+    ${selectField("Adopted clamp frame plan","plan_id",plans.map(item=>option(item.id,`${item.title} · detent ${item.adopted_stop}`)).join(""))}
+    <div class="form-columns">${selectField("Earlier spot observations","baseline_result_id",runs.map(item=>option(item.id,runLabel(item),runs[1]?.id)).join(""))}
+    ${selectField("Post-removal spot observations","repeat_result_id",runs.map(item=>option(item.id,runLabel(item),runs[0]?.id)).join(""))}
+    ${numField("Match radius (plane px)","match_radius_px",8,1,60,1)}</div>
+    <p class="notice">Only marks inside the adopted bars' bands, clearly visible in both sessions, and absent from the earlier observations enter the confirmable changes. Obscured stretches are listed for re-photography.</p>`,
+    "Compare sessions",async data=>{
+      const record=await api(tileUrl()+"/mounts/review",{method:"POST",body:{
+        title:data.get("title"),plan_id:data.get("plan_id"),
+        baseline_result_id:data.get("baseline_result_id"),repeat_result_id:data.get("repeat_result_id"),
+        match_radius_px:Number(data.get("match_radius_px")),
+      }});
+      state.mountActive=record;
+      await gatherTile();
+      commitModal();
+      toast("Removal review saved.");
+      render();
+    });
+}
+
 function importEvidence() {
   modal("Verify evidence ZIP",field("Evidence ZIP","packet",'<input id="field-packet" name="packet" type="file" accept="application/zip,.zip" required>')+
     '<p class="soft">Select a WeaveDesk inspection archive up to 24 MiB. The viewer checks the declared images against their embedded digests.</p>',
@@ -714,6 +857,31 @@ async function doAction(name,target) {
     "trace-add":()=>geometryMeasurementForm("trace"),
     "area-add":()=>geometryMeasurementForm("area"),
     "metrology-open":()=>{state.metrologyActive=state.metrology.find(item=>item.id===id);render();},
+    "mount-plan":mountPlanForm,
+    "mount-review":mountReviewForm,
+    "mount-open":async ()=>{state.mountActive=await api("/api/mounts/"+id);state.tab="mount";render();},
+    "mount-adopt":async ()=>{
+      const plan=state.mountActive;
+      const params=plan.parameters;
+      const record=await api(tileUrl()+"/mounts/plan",{method:"POST",body:{
+        title:plan.title,secure_region_id:plan.regions.secure.id,display_region_id:plan.regions.display.id,
+        bar_width_mm:params.bar_width_mm,bar_gap_mm:params.bar_gap_mm,stops_mm:params.stops_mm,
+        min_contact_fraction:params.min_contact_fraction,stop:Number(target.dataset.stop),
+      }});
+      state.mountActive=record;
+      await gatherTile();
+      toast(`Clamp frame plan saved · adopted detent ${record.adopted_stop}.`);
+      render();
+    },
+    "mount-confirm":async ()=>{
+      const record=state.mountActive;
+      if (!record.confirmable.length) {toast("No confirmable changes to record.");return;}
+      const repeat=await api("/api/results/"+record.repeat.result_id);
+      const entries=record.confirmable.map(item=>({key:item.key,decision:"confirm",notes:`Clamp frame bar ${item.bar} · removal review`}));
+      await api(`/api/results/${repeat.id}/observations`,{method:"PATCH",body:{version:repeat.version,entries}});
+      await gatherTile();
+      toast(`Confirmed ${entries.length} change(s) in the repeat spot observations.`);
+    },
     "receive-add":importEvidence,
     "received-open":()=>{state.receivedActive=state.received.find(item=>item.id===id);render();},
     "defect-note":()=>{

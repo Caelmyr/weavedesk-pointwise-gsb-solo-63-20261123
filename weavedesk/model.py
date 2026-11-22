@@ -36,6 +36,9 @@ REGION_PURPOSES = {
     "bare": "Bare mounting cloth sample",
     "glazed": "Bound textile sample",
     "neutral": "Neutral color card",
+    "fragile": "Thread-loss risk area",
+    "display": "Keep visible for viewers",
+    "loss": "Missing fabric (loss)",
     "ignore": "Exclude from measurement",
 }
 ANALYSIS_LABELS = {

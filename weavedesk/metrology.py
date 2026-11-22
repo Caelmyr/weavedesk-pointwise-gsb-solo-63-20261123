@@ -7,6 +7,7 @@ from scipy import ndimage
 from .analysis import capture_provenance, specimen_provenance
 from .art import ACCENT, INK, SHADOW, base_rgba, curve_points, stored_preview
 from .geometry import active_region, polygon_mask, region_domain, signed_area, specimen_frame, validate_polygon
+from .mend import seam_shape
 from .model import InputError, collection, dictionary, enumeration, identity, numeric_pair, string
 
 
@@ -250,8 +251,20 @@ def polygon_geometry(tile, frame, selection, available):
 def create_metrology(store, specimen_id, payload):
     data = dictionary(payload, "Image measurement")
     title = string(data.get("title"), "Measurement title", maximum=90)
-    mode = enumeration(data.get("mode"), ("trace", "area"), "Geometry measurement")
+    mode = enumeration(data.get("mode"), ("trace", "area", "seam"), "Geometry measurement")
     tile = store.tile(specimen_id)
+    if mode == "seam":
+        # A seam trace belongs to a saved patch plan and is metered against both
+        # materials, so it keeps the plan's own snapshot of cut and opening.
+        plan = store.mend(identity(data.get("mend_id"), "Mend plan ID"))
+        if plan["tile_id"] != tile["id"]:
+            raise InputError("That patch plan belongs to another specimen.")
+        points = path_points(data.get("points"))
+        record = {"title": title, "mode": "seam", **seam_shape(store, plan["id"], points, plan=plan, band=tile)}
+        saved = store.save_metrology(record)
+        plan["seam_ids"] = [*plan.get("seam_ids", []), saved["id"]]
+        store.update_mend(plan)
+        return saved
     frame = specimen_frame(store.blobs, tile)
     available = region_domain(frame.extent, tile) & frame.valid
     if mode == "trace":

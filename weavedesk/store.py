@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS metrology (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS metrology_tile ON metrology(tile_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS mends (
+    id TEXT PRIMARY KEY,
+    tile_id TEXT NOT NULL REFERENCES specimens(id),
+    document TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mends_tile ON mends(tile_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -459,6 +466,39 @@ class Store:
             )
             event(conn, record["tile_id"], "geometry", f"Measured area in the tile plane: {record['title']}")
         return record
+
+    def save_mend(self, fields):
+        record = {**fields, "id": make_id(), "created_at": timestamp()}
+        with self.transaction(write=True) as conn:
+            conn.execute(
+                "INSERT INTO mends(id,tile_id,document,created_at) VALUES (?,?,?,?)",
+                (record["id"], record["tile_id"], document(record), record["created_at"]),
+            )
+            event(conn, record["tile_id"], "mend", f"Planned a lining patch: {record['title']}")
+        return record
+
+    def mend(self, identifier):
+        chosen = identity(identifier, "Mend plan ID")
+        with self.connect() as conn:
+            row = conn.execute("SELECT document FROM mends WHERE id=?", (chosen,)).fetchone()
+            return artifact_row(row, "Mend plan")
+
+    def update_mend(self, record):
+        with self.transaction(write=True) as conn:
+            conn.execute(
+                "UPDATE mends SET document=? WHERE id=?",
+                (document(record), record["id"]),
+            )
+        return record
+
+    def list_mends(self, tile_id):
+        chosen = identity(tile_id, "Specimen ID")
+        with self.connect() as conn:
+            self._tile(conn, chosen)
+            rows = conn.execute(
+                "SELECT document FROM mends WHERE tile_id=? ORDER BY rowid DESC LIMIT 50", (chosen,),
+            ).fetchall()
+            return [json.loads(row["document"]) for row in rows]
 
     def metrology(self, identifier):
         chosen = identity(identifier, "Geometry measurement ID")

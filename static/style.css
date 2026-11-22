@@ -110,6 +110,8 @@ li+li{margin-top:4px}
 .workspace-viewer .stage{min-height:280px}
 .stage small{padding:23px;color:#e0e6d4}
 .stage-foot{margin:7px 0 0;color:var(--muted);font-size:12px}
+.stage-frame{display:grid;gap:6px;align-content:start}
+.stage-frame .stage-foot{margin:0}
 .field{display:grid;gap:5px;min-width:0}
 .field label,.field > span{font-size:12px;color:#45534a;font-weight:650}
 .field input,.field select,.field textarea{padding:8px 9px;min-height:37px;border-radius:5px;border:1px solid var(--line);background:#fffefa;color:var(--ink);width:100%}

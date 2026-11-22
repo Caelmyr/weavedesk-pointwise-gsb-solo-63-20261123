@@ -1,7 +1,7 @@
 import {q,qa,icon,e,btn,link,badge,empty,option,img,field,textField,selectField,numField,checkField,areaField,api,request,date,n,percent,plot,stat,table} from "./widgets.js";
 import {resultCard,specimenResultRows} from "./results.js";
 
-const state={page:"collection",tile:null,tiles:[],tab:"captures",tool:"color",capture:null,viewer:"raw",layer:"overlay",result:null,config:null,results:[],refs:[],packets:[],study:null,studies:[],query:""};
+const state={page:"collection",tile:null,tiles:[],tab:"captures",tool:"color",capture:null,viewer:"raw",layer:"overlay",result:null,config:null,results:[],refs:[],packets:[],study:null,studies:[],query:"",mends:[],mendActive:null,liningPicks:null,liningMark:null};
 const dialog=q("#dialog");
 const nav=[
   ["collection","Specimens","tiles"],
@@ -10,7 +10,7 @@ const nav=[
   ["received","Received evidence","archive"],
 ];
 const tabs=[
-  ["captures","Captures","camera"],["regions","Sampling regions","frame"],["measure","Measure","measure"],["geometry","Geometry","frame"],["evidence","Evidence","archive"],
+  ["captures","Captures","camera"],["regions","Sampling regions","frame"],["measure","Measure","measure"],["mend","Patch and seam","frame"],["geometry","Geometry","frame"],["evidence","Evidence","archive"],
 ];
 const tileUrl=()=>`/api/specimens/${state.tile.id}`;
 const tileData=extra=>({version:state.tile.version,...extra});
@@ -174,20 +174,99 @@ function geometryPage() {
   if (record) {
     const metrics=record.shape;
     const base=`/api/metrology/${record.id}`;
-    const stats=record.mode==="trace"
+    const seam=record.mode==="seam"?metrics.seam:null;
+    const stats=seam
+      ? [["Counted",`${n(seam.counted_mm)} ${seam.unit}`],["Traced",`${n(seam.total_length_mm)} ${seam.unit}`],["Lead-in to first counted",seam.lead_in_mm==null?"—":`${n(seam.lead_in_mm)} ${seam.unit}`],["Beyond last counted",seam.trail_out_mm==null?"—":`${n(seam.trail_out_mm)} ${seam.unit}`]]
+      : record.mode==="trace"
       ? [["Trace length",`${n(metrics.trace_length)} ${metrics.length_unit}`],["Supported stations",percent(metrics.overall_support)]]
       : [["Marked area",`${n(metrics.vector_outline_area)} ${metrics.units}`],["Visible area",`${n(metrics.raster_supported_area)} ${metrics.units}`],["Outline",`${n(metrics.outline_length)} ${metrics.outline_unit}`]];
     const stations=record.mode==="trace"?metrics.segments:metrics.outline_segments;
+    const seamRows=seam?Object.entries(seam.summary_mm).map(([status,value])=>[status,`${n(value)} ${seam.unit}`,seam.total_length_mm?percent(100*value/seam.total_length_mm):"—"]):[];
+    const seamRuns=seam&&seam.counted_runs_mm.length?`<p class="plot-note">Counted runs at ${seam.counted_runs_mm.map(pair=>`${n(pair[0])}–${n(pair[1])} mm`).join(", ")} from the first point.</p>`:"";
     report=`<section class="card stack"><h3>${e(record.title)}</h3>
       <figure class="stage">${img(base+"/overlay.png",record.title)}</figure>
       <div class="metrics">${stats.map(([name,value])=>stat(name,value)).join("")}</div>
-      ${table(["Segment","Length","Heading"],stations.map(item=>[item.index,`${n(item.length)} ${item.units}`,n(item.clockwise_heading)+"°"]))}
+      ${seam?`<p class="plot-note">${e(seam.note)}</p>${seamRuns}${table(["Stretch","Length","Of traced"],seamRows)}${table(["Segment","Traced","Counted","Dominant"],seam.segments.map(item=>[item.index,`${n(item.length_mm)} mm`,`${n(item.counted_mm)} mm`,item.dominant]))}`:`${table(["Segment","Length","Heading"],stations.map(item=>[item.index,`${n(item.length)} ${item.units}`,n(item.clockwise_heading)+"°"]))}`}
       <div class="actions">${link("Measurement JSON",base+"/data.json","secondary","download")}</div></section>`;
   }
   return `<div class="grid-detail">${report}<div class="stack"><section class="card"><h3>Measure a visible shape</h3>
       <p class="soft">Trace along the image or measure visible support inside a saved sampling region.</p>
       <div class="actions">${btn("Trace a path","trace-add","primary","measure")}${btn("Measure region area","area-add","secondary","frame")}</div></section>
       <section class="card"><h3>Saved geometry</h3><div class="divider-list">${results.map(item=>`<div class="row"><div class="grow">${e(item.title)}<br><small>${e(item.mode)} · revision ${item.specimen.version}</small></div>${btn("Open","metrology-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No saved outlines.</p>"}</div></section></div></div>`;
+}
+
+function mendPage() {
+  const plan=state.mendActive;
+  const plans=state.mends||[];
+  const tile=state.tile;
+  const base=tile?.photos.find(item=>item.registration_state==="base");
+  let report=empty("Plan a 28 × 18 mm lining patch under the opening, then trace the seam you will stitch.");
+  if (plan) {
+    const ch=plan.chosen;
+    const up=ch.up||{};
+    const otherLining=plan.linings.find(item=>item.tile_id!==ch.lining_tile_id);
+    const rows=[
+      ["Chosen piece",ch.lining_name],
+      ["Rotate clockwise",`${n(ch.rotation_clockwise_degrees)}°`],
+      ["Yarn mismatch",`${n(ch.grain_mismatch_long_degrees)}° long · ${n(ch.grain_mismatch_short_degrees)}° cross`],
+      ["Marked up end faces",`${up.phrase||"—"} (${n(up.angle)}°)`],
+      ["Opening covered",percent(ch.placement?.covered_percent)],
+      ["Patch margin",`${n(ch.placement?.margin_mm)} mm`],
+      ["Cut centre on lining",`${ch.cut?ch.cut.center_mm.map(v=>n(v)).join(" × "):"—"} mm`],
+      ["Cut cloth margin",ch.cut?`${n(ch.cut.cloth_margin_mm)} mm`:"—"],
+    ];
+    const blue=plan.blue;
+    const blueRows=blue?blue.sides.map(side=>[side.side,side.angle==null?"not visible":`${n(side.angle)}°`,side.angle_from_long==null?"—":`${n(side.angle_from_long)}°`,side.pixels]):[];
+    const segments=plan.seams||[];
+    report=`<section class="card stack"><div class="title-row"><h3>${e(plan.title)}</h3>${badge(ch.feasible?"Patch fits":"Cannot place","ready")}</div>
+      <div class="grid-detail"><div class="stage-frame"><figure class="stage">${img(`/api/mends/${plan.id}/image/plan`,"Planned patch on the old band")}</figure><p class="stage-foot">Orange: marked opening. Green: the 28 × 18 mm piece under it. Arrow: which way the lining's marked up end faces.</p></div>
+      <div class="stage-frame"><figure class="stage">${img(`/api/mends/${plan.id}/image/cut`,"Cut position on the lining")}</figure><p class="stage-foot">Green: where to cut from ${e(ch.lining_name)}. The arrow shows the marked up end before you turn it.</p></div></div>
+      ${table(["Plan","Value"],rows)}
+      ${blueRows.length?table(["Blue edge side","Line angle","Off long grain","Pixels"],blueRows):"<p class='soft'>No blue edging was found on this band photograph.</p>"}
+      <p class="plot-note">${e(blue?.note||"")}</p>
+      ${plan.caveats.map(item=>`<p class="notice">${e(item)}</p>`).join("")}
+      <div class="actions">${link("Plan JSON",`/api/mends/${plan.id}/data.json`,"secondary","download")}${btn("Trace this seam","seam-add","primary","measure")}</div>
+      ${segments.length?`<h3>Traced seams</h3><div class="divider-list">${segments.map(item=>`<div class="row"><div class="grow"><strong>${e(item.title)}</strong><br><small>${n(item.shape?.seam?.counted_mm)} mm counted of ${n(item.shape?.seam?.total_length_mm)} mm traced</small></div>${btn("Open","metrology-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")}</div>`:""}
+      </section>`;
+  }
+  return `<div class="grid-detail">${report}<div class="stack">
+    <section class="card"><h3>Patch plan</h3>
+      <p class="soft">Read the band's two yarn directions, fit one continuous 28 × 18 mm lining piece into photographed cloth, and mark the opening. The cut outlines and the up-end direction are drawn on the images.</p>
+      <div class="actions">${base?btn("Plan a lining patch","mend-add","primary","sample"):""}</div></section>
+    <section class="card"><h3>Saved plans</h3><div class="divider-list">${plans.map(item=>`<div class="row"><div class="grow">${e(item.title)}<br><small>${e(item.chosen.lining_name)} · ${item.chosen.grain_mismatch_total_degrees==null?"unplaced":n(item.chosen.grain_mismatch_total_degrees)+"° grain"}</small></div>${btn("Open","mend-open","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("")||"<p class='soft'>No patch plans yet.</p>"}</div></section>
+  </div></div>`;
+}
+
+function mendForm() {
+  const base=state.tile.photos.find(item=>item.registration_state==="base");
+  if (!base) throw Error("Set a base photo before planning a patch.");
+  const ownOpening=state.tile.regions.filter(item=>item.purpose!=="ignore");
+  if (!ownOpening.length) throw Error("Draw the torn opening as a sampling region first.");
+  const liningTiles=(state.tiles||[]).filter(item=>item.id!==state.tile.id);
+  const options=ownOpening.map(item=>option(item.id,item.name)).join("");
+  modal("Plan a lining patch",`
+    <p class="notice">Choose the region that outlines the torn opening. Then pick up to two lining specimens and mark which end of each piece is up in its photograph.</p>
+    ${textField("Plan name","title",state.tile.name+" lining",'required maxlength="90"')}
+    ${selectField("Opening region","opening_region_id",options)}
+    ${selectField("First lining specimen","lining_a",liningTiles.map(item=>option(item.id,item.name)).join(""))}
+    ${numField("Marked up end on first lining (°)","up_a",90,0,179,1)}
+    ${selectField("Second lining specimen (optional)","lining_b",option("","None","")+liningTiles.map(item=>option(item.id,item.name)).join(""))}
+    ${numField("Marked up end on second lining (°)","up_b",90,0,179,1)}
+    <div id="mend-preview"></div>`,"Save plan",async data=>{
+    const chosen=[];
+    const a=data.get("lining_a"), b=data.get("lining_b");
+    if (a) chosen.push({tile_id:a,up_angle_degrees:Number(data.get("up_a"))});
+    if (b&&b!==a) chosen.push({tile_id:b,up_angle_degrees:Number(data.get("up_b"))});
+    if (!chosen.length) throw Error("Choose at least one lining specimen.");
+    const plan=await api(tileUrl()+"/mends",{method:"POST",body:{
+      title:data.get("title"),opening_region_id:data.get("opening_region_id"),linings:chosen,
+    }});
+    state.mendActive=plan;
+    await gatherTile();
+    commitModal();
+    toast("Patch plan saved.");
+    render();
+  },true);
 }
 
 function receivedPage() {
@@ -215,7 +294,7 @@ function tilePage() {
   <p>${e(descriptors.join(" · ") || "Registered textile sample")}</p></div><div class="actions">${btn("Edit specimen","tile-edit","secondary","edit")}
   ${btn("Approve reference","reference-add","secondary","book")}</div></header>
   <nav class="tabs" aria-label="Specimen tools">${tabs.map(([key,label,glyph])=>`<button type="button" class="tab ${state.tab===key?"active":""}" data-do="tile-tab" data-value="${key}">${icon(glyph)}${e(label)}</button>`).join("")}</nav>
-  ${{captures,regions:regionPage,measure:measurements,geometry:geometryPage,evidence:evidencePage}[state.tab]()}`;
+  ${{captures,regions:regionPage,measure:measurements,mend:mendPage,geometry:geometryPage,evidence:evidencePage}[state.tab]()}`;
 }
 
 function libraryPage() {
@@ -250,8 +329,8 @@ function render() {
 
 async function gatherTile(token=travel) {
   const url=tileUrl();
-  const [results,packets,activity,refs,metrology]=await Promise.all([
-    api(url+"/results"),api(url+"/evidence"),api(url+"/activity"),api("/api/library"),api(url+"/metrology"),
+  const [results,packets,activity,refs,metrology,mends]=await Promise.all([
+    api(url+"/results"),api(url+"/evidence"),api(url+"/activity"),api("/api/library"),api(url+"/metrology"),api(url+"/mends"),
   ]);
   if (token!==travel) return;
   state.results=results.items;
@@ -259,6 +338,7 @@ async function gatherTile(token=travel) {
   state.activity=activity.items;
   state.metrology=metrology.items;
   state.refs=refs.items;
+  state.mends=mends.items;
 }
 
 async function route() {
@@ -513,26 +593,41 @@ function pairForm() {
     },true);
 }
 
-function geometryMeasurementForm(mode) {
+function geometryMeasurementForm(mode,plan=null) {
   const base=state.tile.photos.find(item=>item.registration_state==="base");
   if (!base) throw Error("Set a base photo before measuring its geometry.");
   const area=mode==="area";
+  const seam=mode==="seam";
   if (area&&!state.tile.regions.some(item=>item.purpose!=="ignore")) throw Error("Draw an inspection region before measuring its area.");
-  const title=area?"Measure region area":"Trace a path";
+  if (seam&&!plan) throw Error("Open a saved patch plan before tracing its seam.");
+  const title=area?"Measure region area":seam?"Trace the repair seam":"Trace a path";
+  const defaultTitle=area?"Region area":seam?`${plan.title} seam`:"Surface trace";
+  const notice=seam
+    ?'<p class="notice">Click along the seam you will stitch, starting where the needle first enters cloth. Only stretches where the old band and the placed lining both show cloth are counted; crossing the opening, leaving the patch, or leaving a readable photograph is listed separately.</p>'
+    :'<p class="notice">Click along the shape you want to trace. The line reports measured lengths along the registered surface.</p>';
   const content=area?selectField("Region","region_id",regions(null,false)):`
-    <p class="notice">Click along the shape you want to trace. The line reports measured lengths along the registered surface.</p>
+    ${notice}
     ${drawing(base.registered_url,"Specimen outline for tracing")}
     <div class="actions">${btn("Clear points","draw-clear","tiny secondary")}${btn("Undo point","draw-undo","tiny ghost")}<span class="soft" id="draw-count"></span></div>`;
-  modal(title,textField("Measurement title","title",area?"Region area":"Surface trace",'required maxlength="90"')+content,
+  modal(title,textField("Measurement title","title",defaultTitle,'required maxlength="90"')+content,
     "Save geometry",async data=>{
       const payload={title:data.get("title"),mode,region_id:data.get("region_id"),points:drawPoints};
+      if (seam) payload.mend_id=plan.id;
       state.metrologyActive=await api(tileUrl()+"/metrology",{method:"POST",body:payload});
       await gatherTile();
+      if (seam) {
+        state.mendActive=await api("/api/mends/"+plan.id);
+        const seams=await Promise.all((state.mendActive.seam_ids||[]).map(item=>api("/api/metrology/"+item).catch(()=>null)));
+        state.mendActive.seams=seams.filter(Boolean);
+        state.tab="geometry";
+        toast(`${n(state.metrologyActive.shape.seam.counted_mm)} mm counted of ${n(state.metrologyActive.shape.seam.total_length_mm)} mm traced.`);
+      } else {
+        toast("Geometry measurement saved.");
+      }
       commitModal();
-      toast("Geometry measurement saved.");
       render();
     },!area);
-  if (!area) prepareDrawing([],45);
+  if (!area) prepareDrawing([],seam?120:45);
 }
 
 function importEvidence() {
@@ -714,6 +809,15 @@ async function doAction(name,target) {
     "trace-add":()=>geometryMeasurementForm("trace"),
     "area-add":()=>geometryMeasurementForm("area"),
     "metrology-open":()=>{state.metrologyActive=state.metrology.find(item=>item.id===id);render();},
+    "mend-add":()=>mendForm(),
+    "mend-open":async ()=>{
+      state.mendActive=await api("/api/mends/"+id);
+      const plan=state.mendActive;
+      const seams=await Promise.all((plan.seam_ids||[]).map(item=>api("/api/metrology/"+item).catch(()=>null)));
+      plan.seams=seams.filter(Boolean);
+      render();
+    },
+    "seam-add":()=>geometryMeasurementForm("seam",state.mendActive),
     "receive-add":importEvidence,
     "received-open":()=>{state.receivedActive=state.received.find(item=>item.id===id);render();},
     "defect-note":()=>{

@@ -22,6 +22,7 @@ from .evidence import (
 from .inspection import side_preview, viewing_pair
 from .art import base_rgba
 from .intake import MAX_ARCHIVE_BYTES, inspect_packet
+from .mend import PATCH_LENGTH_MM, PATCH_WIDTH_MM, create_plan, create_seam
 from .metrology import create_metrology
 from .model import (
     ANALYSIS_LABELS,
@@ -416,6 +417,58 @@ def register_desks(api, store, heavy):
             record = create_metrology(store, specimen_id, json_request())
         return jsonify(record), 201
 
+    @api.get("/specimens/<specimen_id>/mends")
+    def mend_list(specimen_id):
+        return jsonify({"items": [
+            {
+                "id": plan["id"],
+                "title": plan["title"],
+                "patch_mm": plan["patch_mm"],
+                "chosen": {
+                    key: plan["chosen"].get(key) for key in (
+                        "lining_name", "rotation_clockwise_degrees", "grain_mismatch_long_degrees",
+                        "grain_mismatch_short_degrees", "grain_mismatch_total_degrees", "up", "feasible",
+                    )
+                },
+                "covered_percent": plan["chosen"]["placement"]["covered_percent"] if plan["chosen"].get("placement") else None,
+                "seam_count": len(plan.get("seam_ids", [])),
+                "created_at": plan["created_at"],
+            }
+            for plan in store.list_mends(specimen_id)
+        ]})
+
+    @api.post("/specimens/<specimen_id>/mends")
+    def mend_make(specimen_id):
+        with heavy:
+            record = create_plan(store, specimen_id, json_request())
+        return jsonify(record), 201
+
+    @api.get("/mends/<mend_id>")
+    def mend_show(mend_id):
+        return jsonify(store.mend(mend_id))
+
+    @api.get("/mends/<mend_id>/image/<layer>")
+    def mend_image(mend_id, layer):
+        plan = store.mend(mend_id)
+        chosen = enumeration(layer, ("plan", "cut"), "Plan image")
+        return png_blob(store, plan["images"].get(chosen))
+
+    @api.get("/mends/<mend_id>/data.json")
+    def mend_document(mend_id):
+        record = store.mend(mend_id)
+        name = filename_stem(record["title"], "mend-plan")
+        return binary_response(artifact_json(record), "application/json", name + ".json")
+
+    @api.post("/mends/<mend_id>/seams")
+    def seam_make(mend_id):
+        with heavy:
+            record = create_seam(store, mend_id, json_request())
+        return jsonify(record), 201
+
+    @api.get("/metrology/<entry_id>")
+    def geometry_record(entry_id):
+        return jsonify(store.metrology(entry_id))
+
     @api.get("/metrology/<entry_id>/overlay.png")
     def geometry_artifact(entry_id):
         return png_blob(store, store.metrology(entry_id)["image"])
@@ -471,6 +524,7 @@ def create_app(data_dir=None):
             "analysis_labels": ANALYSIS_LABELS,
             "tools": TOOLS,
             "study_metrics": public_metrics(),
+            "patch_mm": [PATCH_LENGTH_MM, PATCH_WIDTH_MM],
         })
 
     @app.errorhandler(InputError)
